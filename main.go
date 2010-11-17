@@ -40,8 +40,8 @@ var oauthClient = oauth.Client{
 	ResourceOwnerAuthorizationURI: "http://api.twitter.com/oauth/authenticate",
 	TokenRequestURI:               "http://api.twitter.com/oauth/access_token",
 }
-// home handles requests to the home page.
-func getUserFollowers() {
+
+func getUserTimeline() {
 	token := &oauth.Credentials{accessToken, accessTokenSecret}
 
 	param := make(web.StringsMap)
@@ -72,9 +72,41 @@ func getUserFollowers() {
 	log.Println("END")
 }
 
+func getUserFollowers(screen_name string) {
+	token := &oauth.Credentials{accessToken, accessTokenSecret}
+
+	param := make(web.StringsMap)
+	param.Set("screen_name", screen_name)
+	url := "http://api.twitter.com/1/followers/ids.json"
+	oauthClient.SignParam(token, "GET", url, param)
+	url = url + "?" + string(param.FormEncode())
+	log.Println(url)
+	resp, _, err := http.Get(url)
+	if err != nil {
+		log.Println(err.String())
+		return
+	}
+	p, err := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		log.Println(err.String())
+		return
+	}
+	if resp.StatusCode != 200 {
+		log.Println("error from twitter:", resp.StatusCode)
+		return
+	}
+	//w := req.Respond(web.StatusOK, web.HeaderContentType, "text/plain")
+	var buf bytes.Buffer
+	json.Indent(&buf, p, "", "  ")
+	log.Println("START")
+	fmt.Println(buf.String())
+	log.Println("END")
+}
 func main() {
 	flag.Parse()
-	getUserFollowers()
+	// cheeni has a protected account, so he's a good test.
+	getUserFollowers("cheenixin")
 //		Register("/login", "GET", login).
 //		Register("/account/twitter-callback", "GET", twitterCallback).
 //		Register("/twitter-callback", "GET", twitterCallback)))
