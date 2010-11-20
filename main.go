@@ -1,4 +1,4 @@
-// Copyright 2010 Gary Burd
+// Copyright 2010 Yves Junqueira
 //
 // Licensed under the Apache License, Version 2.0 (the "License"): you may
 // not use this file except in compliance with the License. You may obtain
@@ -15,100 +15,105 @@
 package main
 
 import (
-	"bytes"
 	"flag"
-	"fmt"
 	"github.com/garyburd/twister/oauth"
-//	"github.com/garyburd/twister/server"
 	"github.com/garyburd/twister/web"
+	"github.com/mikejs/gomongo/mongo"
 	"http"
 	"io/ioutil"
 	"json"
 	"log"
-//	"os"
-//	"strings"
-//	"template"
+	"os"
+)
+
+type userFollowers struct {
+	uid       int64
+	followers []int64
+}
+
+const (
+	TWITTER_API_BASE = "http://api.twitter.com/1"
+	UNFOLLOW_DB = "unfollow"
+	USER_FOLLOWERS_TABLE = "user_followers"
 )
 
 var oauthClient = oauth.Client{
-	// This sets various things, including:
-	// oauth_consumer_key
-	// oauth_token
-	// and: _timestamp, _version, etc.
 	Credentials:                   oauth.Credentials{clientToken, clientSecret},
 	TemporaryCredentialRequestURI: "http://api.twitter.com/oauth/request_token",
 	ResourceOwnerAuthorizationURI: "http://api.twitter.com/oauth/authenticate",
 	TokenRequestURI:               "http://api.twitter.com/oauth/access_token",
 }
 
-func getUserTimeline() {
-	token := &oauth.Credentials{accessToken, accessTokenSecret}
+func NewFollowersCrawler() *FollowersCrawler {
+	conn, err := mongo.Connect("127.0.0.1")
+	if err != nil {
+		log.Println("mongo Connect error:", err.String())
+	}
+	return &FollowersCrawler{
+		twitterToken: &oauth.Credentials{accessToken, accessTokenSecret},
+		mongoConn:    conn,
+	}
+}
 
-	param := make(web.StringsMap)
-	url := "http://api.twitter.com/1/statuses/home_timeline.json"
-	oauthClient.SignParam(token, "GET", url, param)
+type FollowersCrawler struct {
+	twitterToken *oauth.Credentials
+	mongoConn    *mongo.Connection
+}
+
+func (c *FollowersCrawler) Save(document mongo.BSON) os.Error {
+	coll := c.mongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_TABLE)
+	coll.Insert(document)
+	log.Println("Inserted Document")
+	return nil
+}
+
+func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byte, err os.Error) {
+	oauthClient.SignParam(c.twitterToken, "GET", url, param)
 	url = url + "?" + string(param.FormEncode())
 	log.Println(url)
 	resp, _, err := http.Get(url)
 	if err != nil {
 		log.Println(err.String())
-		return
+		return nil, err
 	}
-	p, err := ioutil.ReadAll(resp.Body)
+	p, err = ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 	if err != nil {
-		log.Println(err.String())
-		return
+		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		log.Println("error from twitter:", resp.StatusCode)
-		return
+		return nil, err
 	}
-	//w := req.Respond(web.StatusOK, web.HeaderContentType, "text/plain")
-	var buf bytes.Buffer
-	json.Indent(&buf, p, "", "  ")
-	log.Println("START")
-	fmt.Println(buf.String())
-	log.Println("END")
+	return p, nil
 }
 
-func getUserFollowers(screen_name string) {
-	token := &oauth.Credentials{accessToken, accessTokenSecret}
-
+func (c *FollowersCrawler) getUserFollowers(screen_name string) {
 	param := make(web.StringsMap)
 	param.Set("screen_name", screen_name)
-	url := "http://api.twitter.com/1/followers/ids.json"
-	oauthClient.SignParam(token, "GET", url, param)
-	url = url + "?" + string(param.FormEncode())
-	log.Println(url)
-	resp, _, err := http.Get(url)
-	if err != nil {
-		log.Println(err.String())
-		return
+	// timeline:
+	// url := "http://api.twitter.com/1/statuses/home_timeline.json"
+	url := TWITTER_API_BASE + "/followers/ids.json"
+
+	var followers []int64
+	if resp, err := c.twitterGet(url, param); err != nil {
+		log.Println("twitterGet error", err.String())
+	} else if err = json.Unmarshal(resp, &followers); err != nil {
+		log.Println("twitterGet unmarshal error", err.String())
 	}
-	p, err := ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err != nil {
-		log.Println(err.String())
+
+	// XXX: uid
+	g := userFollowers{uid: 0, followers: followers}
+	if document, err := mongo.Marshal(g); err != nil {
+		log.Println("err", err.String())
 		return
+	} else {
+		c.Save(document)
 	}
-	if resp.StatusCode != 200 {
-		log.Println("error from twitter:", resp.StatusCode)
-		return
-	}
-	//w := req.Respond(web.StatusOK, web.HeaderContentType, "text/plain")
-	var buf bytes.Buffer
-	json.Indent(&buf, p, "", "  ")
-	log.Println("START")
-	fmt.Println(buf.String())
-	log.Println("END")
 }
+
 func main() {
 	flag.Parse()
-	// cheeni has a protected account, so he's a good test.
-	getUserFollowers("cheenixin")
-//		Register("/login", "GET", login).
-//		Register("/account/twitter-callback", "GET", twitterCallback).
-//		Register("/twitter-callback", "GET", twitterCallback)))
 
+	crawler := NewFollowersCrawler()
+	crawler.getUserFollowers("javaitarde")
 }
