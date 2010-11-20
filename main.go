@@ -87,28 +87,54 @@ func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byt
 	return p, nil
 }
 
-func (c *FollowersCrawler) getUserFollowers(screen_name string) {
+func (c *FollowersCrawler) getUserId(screen_name string) (uid int64, err os.Error) {
 	param := make(web.StringsMap)
 	param.Set("screen_name", screen_name)
-	// timeline:
-	// url := "http://api.twitter.com/1/statuses/home_timeline.json"
-	url := TWITTER_API_BASE + "/followers/ids.json"
+	url := TWITTER_API_BASE + "/users/show.json"
 
-	var followers []int64
-	if resp, err := c.twitterGet(url, param); err != nil {
-		log.Println("twitterGet error", err.String())
-	} else if err = json.Unmarshal(resp, &followers); err != nil {
-		log.Println("twitterGet unmarshal error", err.String())
+	// Will ignore all string fields.
+	userDetails := map[string]interface{}{}
+	var resp []byte
+
+	if resp, err = c.twitterGet(url, param); err != nil {
+		log.Println("getUserId error", err.String())
+		return
+	}
+	if err = json.Unmarshal(resp, &userDetails); err != nil {
+		log.Println("getUserId unmarshal error", err.String())
+		return
+	}
+	return int64(userDetails["id"].(float64)), nil
+}
+
+func (c *FollowersCrawler) getUserFollowers(screen_name string) (err os.Error) {
+	var uid int64
+	if uid, err = c.getUserId(screen_name); err != nil {
+		return
 	}
 
-	// XXX: uid
-	g := userFollowers{uid: 0, followers: followers}
+	param := make(web.StringsMap)
+	param.Set("screen_name", screen_name)
+	url := TWITTER_API_BASE + "/followers/ids.json"
+
+	var resp []byte
+	if resp, err = c.twitterGet(url, param); err != nil {
+		return
+	}
+	var followers []int64
+	if err = json.Unmarshal(resp, &followers); err != nil {
+		log.Println("unmarshal error", err.String())
+		return
+	}
+
+	g := userFollowers{uid: uid, followers: followers}
 	if document, err := mongo.Marshal(g); err != nil {
 		log.Println("err", err.String())
 		return
 	} else {
 		c.Save(document)
 	}
+	return
 }
 
 func main() {
