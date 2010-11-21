@@ -32,6 +32,7 @@ const (
 	UNFOLLOW_DB                   = "unfollow"
 	USER_FOLLOWERS_TABLE          = "user_followers"
 	USER_FOLLOWERS_COUNTERS_TABLE = "user_followers_counters"
+	JAVAITARDE_UID                = 217554981
 )
 
 var oauthClient = oauth.Client{
@@ -61,32 +62,33 @@ func NewFollowersCrawler() *FollowersCrawler {
 	return &FollowersCrawler{
 		twitterToken: &oauth.Credentials{accessToken, accessTokenSecret},
 		mongoConn:    conn,
+		ourUsers:     make([]int64, 0),
 	}
 }
 
 type FollowersCrawler struct {
 	twitterToken *oauth.Credentials
 	mongoConn    *mongo.Connection
+	ourUsers     []int64
 }
 
 // Insert updates two collecitons: the user followers table, and the user followers table counters. 
 // The first will be garbage collected later to remove older items. The counters table will be kept forever.
-func (c *FollowersCrawler) Insert(userFollowers userFollowers) (err os.Error) {
+func (c *FollowersCrawler) Insert(uf *userFollowers) (err os.Error) {
 	var document mongo.BSON
 
-	if document, err = mongo.Marshal(userFollowers); err != nil {
+	if document, err = mongo.Marshal(uf); err != nil {
 		log.Println("err", err.String())
 		return
 	}
 	coll := c.mongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_TABLE)
 	coll.Insert(document)
-	log.Println("Inserted Document")
 
 	// Update counters table.
 	counter := &userFollowersCounter{
-		uid:              userFollowers.uid,
-		date:             userFollowers.date,
-		followersCounter: len(userFollowers.followers),
+		uid:              uf.uid,
+		date:             uf.date,
+		followersCounter: len(uf.followers),
 	}
 	if document, err = mongo.Marshal(counter); err != nil {
 		log.Println("err", err.String())
@@ -94,7 +96,6 @@ func (c *FollowersCrawler) Insert(userFollowers userFollowers) (err os.Error) {
 	}
 	coll = c.mongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_COUNTERS_TABLE)
 	coll.Insert(document)
-	log.Println("Inserted Counters Document")
 	return nil
 }
 
@@ -138,14 +139,16 @@ func (c *FollowersCrawler) getUserId(screen_name string) (uid int64, err os.Erro
 	return int64(userDetails["id"].(float64)), nil
 }
 
-func (c *FollowersCrawler) getUserFollowers(screen_name string) (err os.Error) {
-	var uid int64
-	if uid, err = c.getUserId(screen_name); err != nil {
-		return
+// if uid != 0, search by uid, else by screenName.
+func (c *FollowersCrawler) getUserFollowers(uid int64, screenName string) (uf *userFollowers, err os.Error) {
+	if uid == 0 {
+		if uid, err = c.getUserId(screenName); err != nil {
+			return
+		}
 	}
 
 	param := make(web.StringsMap)
-	param.Set("screen_name", screen_name)
+	param.Set("screen_name", screenName)
 	url := TWITTER_API_BASE + "/followers/ids.json"
 
 	var resp []byte
@@ -158,8 +161,24 @@ func (c *FollowersCrawler) getUserFollowers(screen_name string) (err os.Error) {
 		return
 	}
 
-	g := userFollowers{uid: uid, followers: followers, date: time.UTC()}
-	c.Insert(g)
+	uf = &userFollowers{uid: uid, followers: followers, date: time.UTC()}
+	c.Insert(uf)
+	log.Printf("updated: %d\n", uid)
+	return
+}
+
+func (c *FollowersCrawler) getAllUsersFollowers() (err os.Error) {
+	for _, u := range c.ourUsers {
+		time.Sleep(3e9) // 3 seconds
+		c.getUserFollowers(u, "")
+	}
+	return
+}
+
+// Find everyone who follows us, so we know who to crawl.
+func (c *FollowersCrawler) findOurUsers(uid int64) (err os.Error) {
+	userFollowers, err := c.getUserFollowers(JAVAITARDE_UID, "")
+	c.ourUsers = userFollowers.followers
 	return
 }
 
@@ -167,5 +186,6 @@ func main() {
 	flag.Parse()
 
 	crawler := NewFollowersCrawler()
-	crawler.getUserFollowers("javaitarde")
+	crawler.findOurUsers(JAVAITARDE_UID)
+	crawler.getAllUsersFollowers()
 }
