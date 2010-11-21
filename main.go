@@ -24,17 +24,14 @@ import (
 	"json"
 	"log"
 	"os"
+	"time"
 )
 
-type userFollowers struct {
-	uid       int64
-	followers []int64
-}
-
 const (
-	TWITTER_API_BASE = "http://api.twitter.com/1"
-	UNFOLLOW_DB = "unfollow"
-	USER_FOLLOWERS_TABLE = "user_followers"
+	TWITTER_API_BASE              = "http://api.twitter.com/1"
+	UNFOLLOW_DB                   = "unfollow"
+	USER_FOLLOWERS_TABLE          = "user_followers"
+	USER_FOLLOWERS_COUNTERS_TABLE = "user_followers_counters"
 )
 
 var oauthClient = oauth.Client{
@@ -43,6 +40,18 @@ var oauthClient = oauth.Client{
 	ResourceOwnerAuthorizationURI: "http://api.twitter.com/oauth/authenticate",
 	TokenRequestURI:               "http://api.twitter.com/oauth/access_token",
 }
+
+type userFollowers struct {
+	uid       int64
+	followers []int64
+	date      *time.Time
+}
+type userFollowersCounter struct {
+	uid              int64
+	followersCounter int
+	date             *time.Time
+}
+
 
 func NewFollowersCrawler() *FollowersCrawler {
 	conn, err := mongo.Connect("127.0.0.1")
@@ -60,10 +69,32 @@ type FollowersCrawler struct {
 	mongoConn    *mongo.Connection
 }
 
-func (c *FollowersCrawler) Save(document mongo.BSON) os.Error {
+// Insert updates two collecitons: the user followers table, and the user followers table counters. 
+// The first will be garbage collected later to remove older items. The counters table will be kept forever.
+func (c *FollowersCrawler) Insert(userFollowers userFollowers) (err os.Error) {
+	var document mongo.BSON
+
+	if document, err = mongo.Marshal(userFollowers); err != nil {
+		log.Println("err", err.String())
+		return
+	}
 	coll := c.mongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_TABLE)
 	coll.Insert(document)
 	log.Println("Inserted Document")
+
+	// Update counters table.
+	counter := &userFollowersCounter{
+		uid:              userFollowers.uid,
+		date:             userFollowers.date,
+		followersCounter: len(userFollowers.followers),
+	}
+	if document, err = mongo.Marshal(counter); err != nil {
+		log.Println("err", err.String())
+		return
+	}
+	coll = c.mongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_COUNTERS_TABLE)
+	coll.Insert(document)
+	log.Println("Inserted Counters Document")
 	return nil
 }
 
@@ -127,13 +158,8 @@ func (c *FollowersCrawler) getUserFollowers(screen_name string) (err os.Error) {
 		return
 	}
 
-	g := userFollowers{uid: uid, followers: followers}
-	if document, err := mongo.Marshal(g); err != nil {
-		log.Println("err", err.String())
-		return
-	} else {
-		c.Save(document)
-	}
+	g := userFollowers{uid: uid, followers: followers, date: time.UTC()}
+	c.Insert(g)
 	return
 }
 
