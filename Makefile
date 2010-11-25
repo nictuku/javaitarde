@@ -1,11 +1,8 @@
-run: clean unfollow 
-	./unfollow
- 
 include $(GOROOT)/src/Make.inc
 
-TARG=unfollow
+TARG=javaitarde
 GOFILES=\
-    main.go\
+    crawl.go\
     settings.go\
 
-include $(GOROOT)/src/Make.cmd
+include $(GOROOT)/src/Make.pkg
