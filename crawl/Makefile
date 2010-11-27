@@ -1,10 +1,8 @@
-run: clean crawl 
-	./crawl
- 
 include $(GOROOT)/src/Make.inc
 
-TARG=crawl
+TARG=javaitarde
 GOFILES=\
-    main.go\
+    crawl.go\
+    settings.go\
 
-include $(GOROOT)/src/Make.cmd
+include $(GOROOT)/src/Make.pkg

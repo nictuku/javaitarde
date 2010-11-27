@@ -32,4 +32,5 @@ func main() {
 	crawler := javaitarde.NewFollowersCrawler()
 	crawler.FindOurUsers(hubUserUid)
 	crawler.GetAllUsersFollowers()
+	//crawler.TestStuff()
 }

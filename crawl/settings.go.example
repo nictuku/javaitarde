@@ -1,0 +1,28 @@
+// Copyright 2010 Yves Junqueira,
+//                Gary Burd
+//
+// Licensed under the Apache License, Version 2.0 (the "License"): you may
+// not use this file except in compliance with the License. You may obtain
+// a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations
+// under the License.
+
+package javaitarde
+
+// Copy this file to settings.go and edit to include your Twitter consumer
+// token and secret.  You can get a token and secret by registering an
+// application at http://developer.twitter.com/apps/new .
+const (
+        cookieSecret = "<define your own random chars>"
+	// Get these from http://developer.twitter.com
+	clientToken  = "<22 chars>"
+	clientSecret = "<43 chars>"
+	accessToken = "<50 chars, including a dash>"
+	accessTokenSecret = "<42 chars>"
+)
