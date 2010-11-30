@@ -27,6 +27,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 	// Can't use mongogo for Inserts because of this:
 	// https://github.com/edsrzf/mongogo/issues/issue/1
@@ -38,6 +39,7 @@ const (
 	UNFOLLOW_DB                   = "unfollow3"
 	USER_FOLLOWERS_TABLE          = "user_followers"
 	USER_FOLLOWERS_COUNTERS_TABLE = "user_followers_counters"
+	FOLLOW_PENDING                = "follow_pending"
 )
 
 var dryRunMode bool
@@ -112,6 +114,16 @@ func (c *FollowersCrawler) Insert(uf bson.Doc) (err os.Error) {
 	}
 	coll = c.gomongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_COUNTERS_TABLE)
 	m, _ = gomongo.Marshal(counter)
+	return coll.Insert(m)
+}
+
+func (c *FollowersCrawler) MarkPendingFollow(uid int64) os.Error {
+	doc := bson.Doc{
+		"uid":  uid,
+		"date": time.UTC(),
+	}
+	coll := c.gomongoConn.GetDB(UNFOLLOW_DB).GetCollection(FOLLOW_PENDING)
+	m, _ := gomongo.Marshal(doc)
 	return coll.Insert(m)
 }
 
@@ -213,6 +225,21 @@ func (c *FollowersCrawler) dbReconnect() {
 	c.gomongoConn = conn2
 }
 
+func (c *FollowersCrawler) dbGetIsFollowPending(uid int64) (isPending bool, err os.Error) {
+	db := c.mongoConn.Database(UNFOLLOW_DB)
+	col := db.Collection(FOLLOW_PENDING)
+	query := mongo.Query{"uid": uid}
+	cursor, err := col.Query(query, 0, 1)
+	if err != nil {
+		log.Printf("dbGetFollowPending: uid=%d, cursor error %s", uid, err.String())
+		c.dbReconnect()
+		return false, err
+	}
+	defer cursor.Close()
+	f := cursor.Next()
+	return f != nil, nil
+}
+
 func (c *FollowersCrawler) dbGetUserFollowers(uid int64) (uf bson.Doc, err os.Error) {
 	db := c.mongoConn.Database(UNFOLLOW_DB)
 	col := db.Collection(USER_FOLLOWERS_TABLE)
@@ -301,10 +328,33 @@ func (c *FollowersCrawler) NotifyUnfollower(abandonedUser int64, unfollowerScree
 	var p []byte
 	if p, err = c.twitterPost(url, param); err != nil {
 		log.Println("notify unfollower error:", err.String())
-		fmt.Println("response", string(p))
+		log.Println("response", string(p))
 	} else {
 		log.Println("notified.")
 	}
+	return
+}
+
+func (c *FollowersCrawler) FollowUser(uid int64) (err os.Error) {
+	if dryRunMode {
+		return
+	}
+	if isPending, _ := c.dbGetIsFollowPending(uid); isPending {
+		log.Println("Already trying to follow user. Skipping follow request.")
+		return
+	}
+	url := TWITTER_API_BASE + "/friendships/create.json"
+	param := make(web.StringsMap)
+	param.Set("user_id", strconv.Itoa64(uid))
+	param.Set("follow", "true")
+	var p []byte
+	log.Println("Trying to follow user", uid)
+	if p, err = c.twitterPost(url, param); err != nil {
+		log.Println("follower user error:", err.String())
+		fmt.Println("response", string(p))
+		return err
+	}
+	c.MarkPendingFollow(uid)
 	return
 }
 
@@ -320,6 +370,10 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 		if newUf, err = c.getUserFollowers(u, ""); err != nil {
 			log.Println("user", u)
 			log.Println("GetUserFollowers err", err.String())
+			if strings.Contains(err.String(), " 401") {
+				// User's follower list is blocked. Need to request access.
+				c.FollowUser(u)
+			}
 			newUf = nil
 		}
 		if prevUf != nil && newUf != nil {
