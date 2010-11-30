@@ -18,7 +18,6 @@ import (
 	"fmt"
 	"flag"
 	"github.com/edsrzf/go-bson"
-	"github.com/edsrzf/mongogo"
 	"github.com/garyburd/twister/oauth"
 	"github.com/garyburd/twister/web"
 	"http"
@@ -29,22 +28,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	// Can't use mongogo for Inserts because of this:
-	// https://github.com/edsrzf/mongogo/issues/issue/1
-	gomongo "github.com/mikejs/gomongo/mongo"
 )
 
 const (
-	TWITTER_API_BASE              = "http://api.twitter.com/1"
-	UNFOLLOW_DB                   = "unfollow3"
-	USER_FOLLOWERS_TABLE          = "user_followers"
-	USER_FOLLOWERS_COUNTERS_TABLE = "user_followers_counters"
-	FOLLOW_PENDING                = "follow_pending"
+	TWITTER_API_BASE = "http://api.twitter.com/1"
 )
 
 var dryRunMode bool
 var ignoredUsers string
-
 var oauthClient = oauth.Client{
 	Credentials:                   oauth.Credentials{clientToken, clientSecret},
 	TemporaryCredentialRequestURI: "http://api.twitter.com/oauth/request_token",
@@ -52,79 +43,19 @@ var oauthClient = oauth.Client{
 	TokenRequestURI:               "http://api.twitter.com/oauth/access_token",
 }
 
-func NewFollowersCrawler() *FollowersCrawler {
-	// Connect with both mongo libraries. We use them at different times, avoiding bugs :-(.
-	conn, err := mongo.Dial("127.0.0.1:27017")
-	if err != nil {
-		log.Println("mongo Connect error:", err.String())
-		panic("mongo conn err")
-	}
-	conn2, err := gomongo.Connect("127.0.0.1")
-	if err != nil {
-		log.Println("gomongo Connect error:", err.String())
-		panic("mongo conn err")
-	}
-	return &FollowersCrawler{
-		twitterToken: &oauth.Credentials{accessToken, accessTokenSecret},
-		mongoConn:    conn,
-		gomongoConn:  conn2,
-		ourUsers:     make([]int64, 0),
-	}
-}
-
 type FollowersCrawler struct {
 	twitterToken *oauth.Credentials
-	mongoConn    *mongo.Conn
-	gomongoConn  *gomongo.Connection
 	ourUsers     []int64
+	db           *FollowersDatabase
 }
 
-// This is broken. (gomongo date marshaling)
-//func (c *FollowersCrawler) InsertThisIsBroken(uf bson.Doc) (err os.Error) {
-//	coll := c.mongoConn.Database(UNFOLLOW_DB).Collection(USER_FOLLOWERS_TABLE)
-//	// Bug with gomongo, old date.
-//	// log.Println("date===>", uf["date"])
-//	coll.Insert(uf)
-//
-//	// Update counters table.
-//	counter := bson.Doc{
-//		"uid":            uf["uid"],
-//		"date":           uf["date"],
-//		"followerscount": len(uf["followers"].([]int64)),
-//	}
-//	coll = c.mongoConn.Database(UNFOLLOW_DB).Collection(USER_FOLLOWERS_COUNTERS_TABLE)
-//	return coll.Insert(counter)
-//}
-
-// Insert updates two collecitons: the user followers table, and the user followers table counters. 
-// The first will be garbage collected later to remove older items. The counters table will be kept forever.
-func (c *FollowersCrawler) Insert(uf bson.Doc) (err os.Error) {
-	if dryRunMode {
-		return
+func NewFollowersCrawler() *FollowersCrawler {
+	newDb := NewFollowersDatabase()
+	return &FollowersCrawler{
+		twitterToken: &oauth.Credentials{accessToken, accessTokenSecret},
+		db:           newDb,
+		ourUsers:     make([]int64, 0),
 	}
-	coll := c.gomongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_TABLE)
-	m, _ := gomongo.Marshal(uf)
-	coll.Insert(m)
-
-	// Update counters table.
-	counter := bson.Doc{
-		"uid":            uf["uid"],
-		"date":           uf["date"],
-		"followerscount": len(uf["followers"].([]int64)),
-	}
-	coll = c.gomongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_COUNTERS_TABLE)
-	m, _ = gomongo.Marshal(counter)
-	return coll.Insert(m)
-}
-
-func (c *FollowersCrawler) MarkPendingFollow(uid int64) os.Error {
-	doc := bson.Doc{
-		"uid":  uid,
-		"date": time.UTC(),
-	}
-	coll := c.gomongoConn.GetDB(UNFOLLOW_DB).GetCollection(FOLLOW_PENDING)
-	m, _ := gomongo.Marshal(doc)
-	return coll.Insert(m)
 }
 
 func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byte, err os.Error) {
@@ -202,65 +133,10 @@ func (c *FollowersCrawler) getUserFollowers(uid int64, screenName string) (uf bs
 	}
 
 	uf = bson.Doc{"uid": uid, "followers": followers, "date": time.UTC()}
-	if err = c.Insert(uf); err != nil {
+	if err = c.db.Insert(uf); err != nil {
 		log.Println("Insert error", err.String())
 	}
 	log.Printf("updated: %d\n", uid)
-	return
-}
-
-func (c *FollowersCrawler) dbReconnect() {
-	log.Printf("reconnecting, just in case")
-	conn, err := mongo.Dial("127.0.0.1:27017")
-	if err != nil {
-		log.Println("mongo Connect error:", err.String())
-		panic("mongo conn err")
-	}
-	conn2, err := gomongo.Connect("127.0.0.1")
-	if err != nil {
-		log.Println("gomongo Connect error:", err.String())
-		panic("mongo conn err")
-	}
-	c.mongoConn = conn
-	c.gomongoConn = conn2
-}
-
-func (c *FollowersCrawler) dbGetIsFollowPending(uid int64) (isPending bool, err os.Error) {
-	db := c.mongoConn.Database(UNFOLLOW_DB)
-	col := db.Collection(FOLLOW_PENDING)
-	query := mongo.Query{"uid": uid}
-	cursor, err := col.Query(query, 0, 1)
-	if err != nil {
-		log.Printf("dbGetFollowPending: uid=%d, cursor error %s", uid, err.String())
-		c.dbReconnect()
-		return false, err
-	}
-	defer cursor.Close()
-	f := cursor.Next()
-	return f != nil, nil
-}
-
-func (c *FollowersCrawler) dbGetUserFollowers(uid int64) (uf bson.Doc, err os.Error) {
-	db := c.mongoConn.Database(UNFOLLOW_DB)
-	col := db.Collection(USER_FOLLOWERS_TABLE)
-	query := mongo.Query{"uid": uid}
-	sort := map[string]int32{"date": -1}
-	query.Sort(sort)
-	cursor, err := col.Query(query, 0, 1)
-	if err != nil {
-		log.Printf("uid=%d, cursor error %s", uid, err.String())
-		c.dbReconnect()
-		return
-	}
-	defer cursor.Close()
-	uf = cursor.Next()
-	if uf == nil {
-		err = os.NewError("no items found")
-		return
-	}
-	if _, ok := uf["followers"]; !ok {
-		log.Println("followers not set?")
-	}
 	return
 }
 
@@ -291,7 +167,7 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 			log.Println("ERROR while comparing user ", strconv.Itoa64(abandonedUser))
 			log.Println("ERROR: bogus uid found in old database: ", unfollower)
 			//panic("bogus uid" + strconv.Itoa64(uid.(int64)))
-			c.dbReconnect()
+			c.db.Reconnect()
 			continue
 		}
 		if _, ok := neww[unfollower]; !ok {
@@ -339,7 +215,7 @@ func (c *FollowersCrawler) FollowUser(uid int64) (err os.Error) {
 	if dryRunMode {
 		return
 	}
-	if isPending, _ := c.dbGetIsFollowPending(uid); isPending {
+	if isPending, _ := c.db.GetIsFollowingPending(uid); isPending {
 		log.Println("Already trying to follow user. Skipping follow request.")
 		return
 	}
@@ -354,7 +230,7 @@ func (c *FollowersCrawler) FollowUser(uid int64) (err os.Error) {
 		fmt.Println("response", string(p))
 		return err
 	}
-	c.MarkPendingFollow(uid)
+	c.db.MarkPendingFollow(uid)
 	return
 }
 
@@ -362,7 +238,7 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 	for _, u := range c.ourUsers {
 		prevUf := bson.Doc{}
 		newUf := bson.Doc{}
-		if prevUf, err = c.dbGetUserFollowers(u); err != nil {
+		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
 			log.Println("user", u)
 			log.Println("dbGetUserFollowers err", err.String())
 			prevUf = nil
@@ -397,7 +273,7 @@ func (c *FollowersCrawler) FindOurUsers(uid int64) (err os.Error) {
 
 func (c *FollowersCrawler) TestStuff() {
 	log.Println("gogo")
-	u, _ := c.dbGetUserFollowers(16196534)
+	u, _ := c.db.GetUserFollowers(16196534)
 	for f1, f2 := range u["followers"].([]interface{}) {
 		if f2.(int64) == 118058049 {
 			log.Println(f1, f2)
