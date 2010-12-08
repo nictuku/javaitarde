@@ -60,7 +60,7 @@ func NewFollowersCrawler() *FollowersCrawler {
 
 func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(c.twitterToken, "GET", url, param)
-	url = url + "?" + string(param.FormEncode())
+	url = url + "?" + param.FormEncodedString()
 	resp, _, err := http.Get(url)
 	return readHttpResponse(resp, err)
 }
