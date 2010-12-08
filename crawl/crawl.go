@@ -60,7 +60,7 @@ func NewFollowersCrawler() *FollowersCrawler {
 
 func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(c.twitterToken, "GET", url, param)
-	url = url + "?" + string(param.FormEncode())
+	url = url + "?" + string(param.FormEncodedString())
 	resp, _, err := http.Get(url)
 	return readHttpResponse(resp, err)
 }
@@ -240,7 +240,7 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 		newUf := bson.Doc{}
 		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
 			log.Println("user", u)
-			log.Println("dbGetUserFollowers err", err.String())
+			log.Println("db.GetUserFollowers err", err.String())
 			prevUf = nil
 		}
 		if newUf, err = c.getUserFollowers(u, ""); err != nil {
@@ -297,7 +297,6 @@ func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.E
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		log.Printf("HTTP Error %d", resp.StatusCode)
 		log.Printf("Response: %s", string(p))
 		err = os.NewError(fmt.Sprintf("Server Error code: %d", resp.StatusCode))
 		if err == nil {
