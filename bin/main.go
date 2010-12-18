@@ -17,20 +17,32 @@ package main
 import (
 	"javaitarde"
 	"flag"
+	"log"
+	"time"
 )
 
 var hubUserUid int64
+var runContinuously bool
 
 func init() {
 	flag.Int64Var(&hubUserUid, "hubuid", 217554981,
 		"Uid of our user, whose followers we want to track for unfollows.")
+	flag.BoolVar(&runContinuously, "runContinuously", false,
+		"Don't quit after the first run.")
 }
 
 func main() {
 	flag.Parse()
-
 	crawler := javaitarde.NewFollowersCrawler()
-	crawler.FindOurUsers(hubUserUid)
-	crawler.GetAllUsersFollowers()
-	//crawler.TestStuff()
+
+	for {
+		crawler.FindOurUsers(hubUserUid)
+		crawler.GetAllUsersFollowers()
+		//crawler.TestStuff()
+		if !runContinuously {
+			break
+		}
+		log.Println("sleeping.")
+		time.Sleep(30e9) // sleep for 30 seconds.
+	}
 }

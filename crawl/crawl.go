@@ -35,6 +35,7 @@ const (
 )
 
 var dryRunMode bool
+var notifyUsers bool
 var ignoredUsers string
 var oauthClient = oauth.Client{
 	Credentials:                   oauth.Credentials{clientToken, clientSecret},
@@ -192,7 +193,7 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 }
 
 func (c *FollowersCrawler) NotifyUnfollower(abandonedUser int64, unfollowerScreenName string) (err os.Error) {
-	if dryRunMode {
+	if dryRunMode || !notifyUsers {
 		return
 	}
 	url := TWITTER_API_BASE + "/direct_messages/new.json"
@@ -327,6 +328,8 @@ func rateLimitStats(resp *http.Response) {
 func init() {
 	flag.BoolVar(&dryRunMode, "dryrun", true,
 		"Don't make changes to the database.")
+	flag.BoolVar(&notifyUsers, "notifyUsers", true,
+		"Notify unfollows to users.")
 	// TODO(nictuku): Make this a list.
 	flag.StringVar(&ignoredUsers, "ignoreUsers", "118058049",
 		"UserID to ignore (flaky twitter results)")
