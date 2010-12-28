@@ -35,6 +35,7 @@ const (
 )
 
 var dryRunMode bool
+var notifyUsers bool
 var ignoredUsers string
 var oauthClient = oauth.Client{
 	Credentials:                   oauth.Credentials{clientToken, clientSecret},
@@ -60,7 +61,7 @@ func NewFollowersCrawler() *FollowersCrawler {
 
 func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(c.twitterToken, "GET", url, param)
-	url = url + "?" + param.FormEncodedString()
+	url = url + "?" + string(param.FormEncodedString())
 	resp, _, err := http.Get(url)
 	return readHttpResponse(resp, err)
 }
@@ -68,7 +69,7 @@ func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byt
 // Data in param must be URL escaped already.
 func (c *FollowersCrawler) twitterPost(url string, param web.StringsMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(c.twitterToken, "POST", url, param)
-	log.Println(param.StringMap())
+	//log.Println(param.StringMap())
 	return readHttpResponse(http.PostForm(url, param.StringMap()))
 }
 
@@ -136,14 +137,13 @@ func (c *FollowersCrawler) getUserFollowers(uid int64, screenName string) (uf bs
 	if err = c.db.Insert(uf); err != nil {
 		log.Println("Insert error", err.String())
 	}
-	log.Printf("updated: %d\n", uid)
 	return
 }
 
 func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson.Doc) {
 	fOld, ok := prevUf["followers"]
 	if !ok || fOld == nil {
-		log.Printf("fOld: no followers %+v", fOld)
+		log.Printf("fOld: no followers %+v\n", fOld)
 		return
 	}
 	fNew := newUf["followers"]
@@ -192,11 +192,12 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 }
 
 func (c *FollowersCrawler) NotifyUnfollower(abandonedUser int64, unfollowerScreenName string) (err os.Error) {
-	if dryRunMode {
+	if dryRunMode || !notifyUsers {
 		return
 	}
 	url := TWITTER_API_BASE + "/direct_messages/new.json"
 	abandoned, err := c.getUserName(abandonedUser)
+	log.Printf("%s unfollowed %s, notifying.\n", unfollowerScreenName, abandoned)
 	param := make(web.StringsMap)
 	param.Set("screen_name", abandoned)
 	// TODO(nictuku): translate messages.
@@ -205,8 +206,6 @@ func (c *FollowersCrawler) NotifyUnfollower(abandonedUser int64, unfollowerScree
 	if p, err = c.twitterPost(url, param); err != nil {
 		log.Println("notify unfollower error:", err.String())
 		log.Println("response", string(p))
-	} else {
-		log.Println("notified.")
 	}
 	return
 }
@@ -239,8 +238,7 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 		prevUf := bson.Doc{}
 		newUf := bson.Doc{}
 		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
-			log.Println("user", u)
-			log.Println("dbGetUserFollowers err", err.String())
+			log.Printf("db.GetUserFollowers err=%s, userId=%d\n", err.String(), u)
 			prevUf = nil
 		}
 		if newUf, err = c.getUserFollowers(u, ""); err != nil {
@@ -297,8 +295,7 @@ func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.E
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		log.Printf("HTTP Error %d", resp.StatusCode)
-		log.Printf("Response: %s", string(p))
+		log.Printf("Response: %s\n", string(p))
 		err = os.NewError(fmt.Sprintf("Server Error code: %d", resp.StatusCode))
 		if err == nil {
 			err = os.NewError("HTTP Error " + string(resp.StatusCode) + " (error state _not_ reported by http library)")
@@ -314,20 +311,21 @@ func rateLimitStats(resp *http.Response) {
 	if resp == nil {
 		return
 	}
-	reset, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Reset"))
 	curr := time.Seconds()
-	log.Print("(TwitterRateLimit) Limit:", resp.GetHeader("X-RateLimit-Limit"),
-		", Remaining: ", resp.GetHeader("X-RateLimit-Remaining"),
-		", Reset in ", reset-curr, "s")
-	// TODO(nictuku): Add proper rate limiting based on values above.
-	// TODO(nictuku): Maybe panic if we do more than X operations per run, as an extra precaution.
-	time.Sleep(3e9) // 3 seconds
+	reset, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Reset"))
+	remaining, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Remaining"))
+	if remaining < 1 {
+		log.Printf("Twitter API limits exceeded. Sleeping for %s seconds.\n", reset-curr)
+		time.Sleep(reset-curr * 1e9)
+	}
 }
 
 
 func init() {
 	flag.BoolVar(&dryRunMode, "dryrun", true,
 		"Don't make changes to the database.")
+	flag.BoolVar(&notifyUsers, "notifyUsers", true,
+		"Notify unfollows to users.")
 	// TODO(nictuku): Make this a list.
 	flag.StringVar(&ignoredUsers, "ignoreUsers", "118058049",
 		"UserID to ignore (flaky twitter results)")

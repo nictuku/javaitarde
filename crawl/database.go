@@ -22,7 +22,7 @@ import (
 	"github.com/edsrzf/mongogo"
 	// Can't use mongogo for Inserts because of this:
 	// https://github.com/edsrzf/mongogo/issues/issue/1
-	gomongo "github.com/mikejs/gomongo/mongo"
+	gomongo "github.com/nictuku/gomongo/mongo"
 )
 
 const (
