@@ -244,10 +244,11 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
                 // TODO(nictuku): Currently, interrupted executions will update the database even though the users were
                 // not notified. Need to either mark entries as 'processed' or only save them on the database post fact.
 		if newUf, err = c.getUserFollowers(u, ""); err != nil {
-			log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.String(), u)
 			if strings.Contains(err.String(), " 401") {
 				// User's follower list is blocked. Need to request access.
 				c.FollowUser(u)
+			} else {
+				log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.String(), u)
 			}
 			newUf = nil
 		}
