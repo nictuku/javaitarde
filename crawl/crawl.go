@@ -61,7 +61,7 @@ func NewFollowersCrawler() *FollowersCrawler {
 
 func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(c.twitterToken, "GET", url, param)
-	url = url + "?" + string(param.FormEncodedString())
+	url = url + "?" + param.FormEncodedString()
 	resp, _, err := http.Get(url)
 	return readHttpResponse(resp, err)
 }
@@ -241,9 +241,10 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 			log.Printf("db.GetUserFollowers err=%s, userId=%d\n", err.String(), u)
 			prevUf = nil
 		}
+                // TODO(nictuku): Currently, interrupted executions will update the database even though the users were
+                // not notified. Need to either mark entries as 'processed' or only save them on the database post fact.
 		if newUf, err = c.getUserFollowers(u, ""); err != nil {
-			log.Println("user", u)
-			log.Println("GetUserFollowers err", err.String())
+			log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.String(), u)
 			if strings.Contains(err.String(), " 401") {
 				// User's follower list is blocked. Need to request access.
 				c.FollowUser(u)
