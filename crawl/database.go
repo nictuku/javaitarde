@@ -22,7 +22,7 @@ import (
 	"github.com/edsrzf/mongogo"
 	// Can't use mongogo for Inserts because of this:
 	// https://github.com/edsrzf/mongogo/issues/issue/1
-	gomongo "github.com/nictuku/gomongo/mongo"
+	gomongo "github.com/mikejs/gomongo/mongo"
 )
 
 const (
@@ -105,7 +105,7 @@ func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, er
 	db := c.mongoConn.Database(UNFOLLOW_DB)
 	col := db.Collection(FOLLOW_PENDING)
 	query := mongo.Query{"uid": uid}
-	cursor, err := col.Query(query, 0, 1)
+	cursor, err := col.Find(query, 0, 1)
 	if err != nil {
 		log.Printf("dbGetFollowPending: uid=%d, cursor error %s", uid, err.String())
 		c.Reconnect()
@@ -122,7 +122,7 @@ func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf bson.Doc, err os.Err
 	query := mongo.Query{"uid": uid}
 	sort := map[string]int32{"date": -1}
 	query.Sort(sort)
-	cursor, err := col.Query(query, 0, 1)
+	cursor, err := col.Find(query, 0, 1)
 	if err != nil {
 		log.Printf("uid=%d, cursor error %s", uid, err.String())
 		c.Reconnect()

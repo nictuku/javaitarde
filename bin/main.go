@@ -19,6 +19,8 @@ import (
 	"flag"
 	"log"
 	"time"
+	"runtime"
+	_ "expvar"
 )
 
 var hubUserUid int64
@@ -34,6 +36,13 @@ func init() {
 func main() {
 	flag.Parse()
 	crawler := javaitarde.NewFollowersCrawler()
+
+	defer func() { 
+	if r:= recover();  r != nil {
+		log.Println("============ recovered")
+		log.Printf("%+v",runtime.MemStats) 
+	}
+	}()
 
 	for {
 		crawler.FindOurUsers(hubUserUid)

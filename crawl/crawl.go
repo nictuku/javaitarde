@@ -32,6 +32,7 @@ import (
 
 const (
 	TWITTER_API_BASE = "http://api.twitter.com/1"
+	MAX_UNFOLLOW = 10
 )
 
 var dryRunMode bool
@@ -59,7 +60,7 @@ func NewFollowersCrawler() *FollowersCrawler {
 	}
 }
 
-func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byte, err os.Error) {
+func (c *FollowersCrawler) twitterGet(url string, param web.ParamMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(c.twitterToken, "GET", url, param)
 	url = url + "?" + param.FormEncodedString()
 	resp, _, err := http.Get(url)
@@ -67,14 +68,14 @@ func (c *FollowersCrawler) twitterGet(url string, param web.StringsMap) (p []byt
 }
 
 // Data in param must be URL escaped already.
-func (c *FollowersCrawler) twitterPost(url string, param web.StringsMap) (p []byte, err os.Error) {
+func (c *FollowersCrawler) twitterPost(url string, param web.ParamMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(c.twitterToken, "POST", url, param)
 	//log.Println(param.StringMap())
 	return readHttpResponse(http.PostForm(url, param.StringMap()))
 }
 
 func (c *FollowersCrawler) getUserId(screen_name string) (uid int64, err os.Error) {
-	param := make(web.StringsMap)
+	param := make(web.ParamMap)
 	param.Set("screen_name", screen_name)
 	url := TWITTER_API_BASE + "/users/show.json"
 
@@ -93,7 +94,7 @@ func (c *FollowersCrawler) getUserId(screen_name string) (uid int64, err os.Erro
 }
 
 func (c *FollowersCrawler) getUserName(uid int64) (screenName string, err os.Error) {
-	param := make(web.StringsMap)
+	param := make(web.ParamMap)
 	param.Set("id", strconv.Itoa64(uid))
 	url := TWITTER_API_BASE + "/users/show.json"
 
@@ -114,7 +115,7 @@ func (c *FollowersCrawler) getUserName(uid int64) (screenName string, err os.Err
 
 // if uid != 0, search by uid, else by screenName.
 func (c *FollowersCrawler) getUserFollowers(uid int64, screenName string) (uf bson.Doc, err os.Error) {
-	param := make(web.StringsMap)
+	param := make(web.ParamMap)
 	if uid != 0 {
 		param.Set("id", strconv.Itoa64(uid))
 	} else {
@@ -156,7 +157,7 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 		neww[uid] = 1
 	}
 
-	if len(fOld.([]interface{})) > len(neww)+5 {
+	if len(fOld.([]interface{})) > len(neww)+MAX_UNFOLLOW {
 		panic("too many unfollows")
 	}
 
@@ -198,7 +199,7 @@ func (c *FollowersCrawler) NotifyUnfollower(abandonedUser int64, unfollowerScree
 	url := TWITTER_API_BASE + "/direct_messages/new.json"
 	abandoned, err := c.getUserName(abandonedUser)
 	log.Printf("%s unfollowed %s, notifying.\n", unfollowerScreenName, abandoned)
-	param := make(web.StringsMap)
+	param := make(web.ParamMap)
 	param.Set("screen_name", abandoned)
 	// TODO(nictuku): translate messages.
 	param.Set("text", fmt.Sprintf("Xiiii.. você não está mais sendo seguido por @%s :-(.", unfollowerScreenName))
@@ -219,7 +220,7 @@ func (c *FollowersCrawler) FollowUser(uid int64) (err os.Error) {
 		return
 	}
 	url := TWITTER_API_BASE + "/friendships/create.json"
-	param := make(web.StringsMap)
+	param := make(web.ParamMap)
 	param.Set("user_id", strconv.Itoa64(uid))
 	param.Set("follow", "true")
 	var p []byte
