@@ -32,11 +32,11 @@ import (
 
 const (
 	TWITTER_API_BASE = "http://api.twitter.com/1"
-	MAX_UNFOLLOW = 10
 )
 
 var dryRunMode bool
 var notifyUsers bool
+var maxUnfollows int
 var ignoredUsers string
 var oauthClient = oauth.Client{
 	Credentials:                   oauth.Credentials{clientToken, clientSecret},
@@ -157,7 +157,7 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 		neww[uid] = 1
 	}
 
-	if len(fOld.([]interface{})) > len(neww)+MAX_UNFOLLOW {
+	if len(fOld.([]interface{})) > len(neww)+maxUnfollows {
 		panic("too many unfollows")
 	}
 
@@ -242,8 +242,8 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 			log.Printf("db.GetUserFollowers err=%s, userId=%d\n", err.String(), u)
 			prevUf = nil
 		}
-                // TODO(nictuku): Currently, interrupted executions will update the database even though the users were
-                // not notified. Need to either mark entries as 'processed' or only save them on the database post fact.
+		// TODO(nictuku): Currently, interrupted executions will update the database even though the users were
+		// not notified. Need to either mark entries as 'processed' or only save them on the database post fact.
 		if newUf, err = c.getUserFollowers(u, ""); err != nil {
 			if strings.Contains(err.String(), " 401") {
 				// User's follower list is blocked. Need to request access.
@@ -319,7 +319,7 @@ func rateLimitStats(resp *http.Response) {
 	remaining, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Remaining"))
 	if remaining < 1 && reset-curr > 0 {
 		log.Printf("Twitter API limits exceeded. Sleeping for %d seconds.\n", reset-curr)
-		time.Sleep(reset-curr * 1e9)
+		time.Sleep(reset - curr*1e9)
 	}
 }
 
@@ -329,6 +329,7 @@ func init() {
 		"Don't make changes to the database.")
 	flag.BoolVar(&notifyUsers, "notifyUsers", true,
 		"Notify unfollows to users.")
+	flag.IntVar(&maxUnfollows, "maxUnfollows", 50, "Panic if global unfollow number exceeds this.")
 	// TODO(nictuku): Make this a list.
 	flag.StringVar(&ignoredUsers, "ignoreUsers", "118058049",
 		"UserID to ignore (flaky twitter results)")
