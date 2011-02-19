@@ -19,38 +19,27 @@ import (
 	"os"
 	"time"
 	"github.com/edsrzf/go-bson"
-	"github.com/edsrzf/mongogo"
-	// Can't use mongogo for Inserts because of this:
-	// https://github.com/edsrzf/mongogo/issues/issue/1
-	gomongo "github.com/mikejs/gomongo/mongo"
+	"github.com/garyburd/go-mongo"
 )
 
 const (
-	UNFOLLOW_DB                   = "unfollow3"
-	USER_FOLLOWERS_TABLE          = "user_followers"
-	USER_FOLLOWERS_COUNTERS_TABLE = "user_followers_counters"
-	FOLLOW_PENDING                = "follow_pending"
+	db                            = "unfollow3"
+	USER_FOLLOWERS_TABLE          = db + ".user_followers"
+	USER_FOLLOWERS_COUNTERS_TABLE = db + ".user_followers_counters"
+	FOLLOW_PENDING_TABLE          = db + ".follow_pending"
 )
 
 type FollowersDatabase struct {
-	mongoConn   *mongo.Conn
-	gomongoConn *gomongo.Connection
+	mongoConn mongo.Conn
 }
 
 func NewFollowersDatabase() *FollowersDatabase {
-	// Connect with both mongo libraries. We use them at different times,
-	// to avoid bugs :-(.
 	conn, err := mongo.Dial("127.0.0.1:27017")
 	if err != nil {
 		log.Println("mongo Connect error:", err.String())
 		panic("mongo conn err")
 	}
-	conn2, err := gomongo.Connect("127.0.0.1")
-	if err != nil {
-		log.Println("gomongo Connect error:", err.String())
-		panic("mongo conn err")
-	}
-	return &FollowersDatabase{mongoConn: conn, gomongoConn: conn2}
+	return &FollowersDatabase{mongoConn: conn}
 }
 
 // Insert updates two collecitons: the user followers table, and the user followers table counters. 
@@ -59,9 +48,10 @@ func (c *FollowersDatabase) Insert(uf bson.Doc) (err os.Error) {
 	if dryRunMode {
 		return
 	}
-	coll := c.gomongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_TABLE)
-	m, _ := gomongo.Marshal(uf)
-	coll.Insert(m)
+	err = mongo.SafeInsert(c.mongoConn, USER_FOLLOWERS_TABLE, nil, uf)
+	if err != nil {
+		return err
+	}
 
 	// Update counters table.
 	counter := bson.Doc{
@@ -69,9 +59,7 @@ func (c *FollowersDatabase) Insert(uf bson.Doc) (err os.Error) {
 		"date":           uf["date"],
 		"followerscount": len(uf["followers"].([]int64)),
 	}
-	coll = c.gomongoConn.GetDB(UNFOLLOW_DB).GetCollection(USER_FOLLOWERS_COUNTERS_TABLE)
-	m, _ = gomongo.Marshal(counter)
-	return coll.Insert(m)
+	return mongo.SafeInsert(c.mongoConn, USER_FOLLOWERS_COUNTERS_TABLE, nil, counter)
 }
 
 
@@ -80,9 +68,7 @@ func (c *FollowersDatabase) MarkPendingFollow(uid int64) os.Error {
 		"uid":  uid,
 		"date": time.UTC(),
 	}
-	coll := c.gomongoConn.GetDB(UNFOLLOW_DB).GetCollection(FOLLOW_PENDING)
-	m, _ := gomongo.Marshal(doc)
-	return coll.Insert(m)
+	return mongo.SafeInsert(c.mongoConn, FOLLOW_PENDING_TABLE, nil, doc)
 }
 
 func (c *FollowersDatabase) Reconnect() {
@@ -92,48 +78,29 @@ func (c *FollowersDatabase) Reconnect() {
 		log.Println("mongo Connect error:", err.String())
 		panic("mongo conn err")
 	}
-	conn2, err := gomongo.Connect("127.0.0.1")
-	if err != nil {
-		log.Println("gomongo Connect error:", err.String())
-		panic("mongo conn err")
-	}
 	c.mongoConn = conn
-	c.gomongoConn = conn2
 }
 
 func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, err os.Error) {
-	db := c.mongoConn.Database(UNFOLLOW_DB)
-	col := db.Collection(FOLLOW_PENDING)
-	query := mongo.Query{"uid": uid}
-	cursor, err := col.Find(query, 0, 1)
-	if err != nil {
-		log.Printf("dbGetFollowPending: uid=%d, cursor error %s", uid, err.String())
-		c.Reconnect()
-		return false, err
-	}
+	cursor, err := c.mongoConn.Find(FOLLOW_PENDING_TABLE, map[string]int64{"uid": uid}, nil)
 	defer cursor.Close()
-	f := cursor.Next()
-	return f != nil, nil
+	if cursor.HasNext() {
+		return true, nil
+	}
+	return false, err
 }
 
-func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf bson.Doc, err os.Error) {
-	db := c.mongoConn.Database(UNFOLLOW_DB)
-	col := db.Collection(USER_FOLLOWERS_TABLE)
-	query := mongo.Query{"uid": uid}
-	sort := map[string]int32{"date": -1}
-	query.Sort(sort)
-	cursor, err := col.Find(query, 0, 1)
-	if err != nil {
-		log.Printf("uid=%d, cursor error %s", uid, err.String())
-		c.Reconnect()
+func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf map[string]interface{}, err os.Error) {
+	order := map[string]int64{"date": 1}
+	q := map[string]interface{}{"uid": uid}
+	query := map[string]interface{}{"$query": q, "$orderby": order}
+
+	cursor, err := c.mongoConn.Find(USER_FOLLOWERS_TABLE, query, nil)
+	if !cursor.HasNext() {
+		err = os.NewError("no result")
 		return
 	}
-	defer cursor.Close()
-	uf = cursor.Next()
-	if uf == nil {
-		err = os.NewError("no items found")
-		return
-	}
+	err = cursor.Next(&uf)
 	if _, ok := uf["followers"]; !ok {
 		log.Println("followers not set?")
 	}

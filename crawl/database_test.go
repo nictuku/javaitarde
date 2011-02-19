@@ -26,7 +26,10 @@ var testUser = int64(8044162) // twitter.com/licio
 // https://github.com/edsrzf/mongogo/issues/closed#issue/2
 func TestMongo(t *testing.T) {
 	c := NewFollowersCrawler()
-	u, _ := c.db.GetUserFollowers(testUser)
+	u, err := c.db.GetUserFollowers(testUser)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for i := 0; i < 100; i++ {
 		u2, _ := c.db.GetUserFollowers(testUser)
 		if !reflect.DeepEqual(u, u2) {
@@ -34,5 +37,3 @@ func TestMongo(t *testing.T) {
 		}
 	}
 }
-
-

@@ -19,7 +19,6 @@ import (
 	"flag"
 	"log"
 	"time"
-	"runtime"
 	_ "expvar"
 )
 
@@ -36,13 +35,6 @@ func init() {
 func main() {
 	flag.Parse()
 	crawler := javaitarde.NewFollowersCrawler()
-
-	defer func() { 
-	if r:= recover();  r != nil {
-		log.Println("============ recovered")
-		log.Printf("%+v",runtime.MemStats) 
-	}
-	}()
 
 	for {
 		crawler.FindOurUsers(hubUserUid)
