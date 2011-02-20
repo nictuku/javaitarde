@@ -34,6 +34,7 @@ func init() {
 
 func main() {
 	flag.Parse()
+	javaitarde.SetupDb()
 	crawler := javaitarde.NewFollowersCrawler()
 
 	for {

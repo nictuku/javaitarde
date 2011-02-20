@@ -15,133 +15,62 @@
 package javaitarde
 
 import (
-	"fmt"
 	"flag"
+	"fmt"
 	"github.com/edsrzf/go-bson"
-	"github.com/garyburd/twister/oauth"
-	"github.com/garyburd/twister/web"
-	"http"
-	"io/ioutil"
-	"json"
 	"log"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 )
 
-const (
-	TWITTER_API_BASE = "http://api.twitter.com/1"
-)
 
 var dryRunMode bool
-var notifyUsers bool
-var maxUnfollows int
 var ignoredUsers string
-var oauthClient = oauth.Client{
-	Credentials:                   oauth.Credentials{clientToken, clientSecret},
-	TemporaryCredentialRequestURI: "http://api.twitter.com/oauth/request_token",
-	ResourceOwnerAuthorizationURI: "http://api.twitter.com/oauth/authenticate",
-	TokenRequestURI:               "http://api.twitter.com/oauth/access_token",
-}
+var maxUnfollows int
+var notifyUsers bool
 
 type FollowersCrawler struct {
-	twitterToken *oauth.Credentials
-	ourUsers     []int64
-	db           *FollowersDatabase
+	ourUsers []int64
+	db       *FollowersDatabase
+	userMap  map[int64]string
+	tw       *twitterClient
 }
 
 func NewFollowersCrawler() *FollowersCrawler {
-	newDb := NewFollowersDatabase()
 	return &FollowersCrawler{
-		twitterToken: &oauth.Credentials{accessToken, accessTokenSecret},
-		db:           newDb,
-		ourUsers:     make([]int64, 0),
+		tw:       newTwitterClient(),
+		db:       NewFollowersDatabase(),
+		ourUsers: make([]int64, 0),
+		userMap:  map[int64]string{},
 	}
-}
-
-func (c *FollowersCrawler) twitterGet(url string, param web.ParamMap) (p []byte, err os.Error) {
-	oauthClient.SignParam(c.twitterToken, "GET", url, param)
-	url = url + "?" + param.FormEncodedString()
-	resp, _, err := http.Get(url)
-	return readHttpResponse(resp, err)
-}
-
-// Data in param must be URL escaped already.
-func (c *FollowersCrawler) twitterPost(url string, param web.ParamMap) (p []byte, err os.Error) {
-	oauthClient.SignParam(c.twitterToken, "POST", url, param)
-	//log.Println(param.StringMap())
-	return readHttpResponse(http.PostForm(url, param.StringMap()))
-}
-
-func (c *FollowersCrawler) getUserId(screen_name string) (uid int64, err os.Error) {
-	param := make(web.ParamMap)
-	param.Set("screen_name", screen_name)
-	url := TWITTER_API_BASE + "/users/show.json"
-
-	userDetails := map[string]interface{}{}
-	var resp []byte
-
-	if resp, err = c.twitterGet(url, param); err != nil {
-		log.Println("getUserId error", err.String())
-		return
-	}
-	if err = json.Unmarshal(resp, &userDetails); err != nil {
-		log.Println("getUserId unmarshal error", err.String())
-		return
-	}
-	return int64(userDetails["id"].(float64)), nil
 }
 
 func (c *FollowersCrawler) getUserName(uid int64) (screenName string, err os.Error) {
-	param := make(web.ParamMap)
-	param.Set("id", strconv.Itoa64(uid))
-	url := TWITTER_API_BASE + "/users/show.json"
-
-	userDetails := map[string]interface{}{}
-	var resp []byte
-
-	if resp, err = c.twitterGet(url, param); err != nil {
-		log.Println("getUserName error", err.String())
-		return
+	// TODO: Save in our database.
+	if screenName, ok := c.userMap[uid]; ok {
+		return screenName, nil
 	}
-	if err = json.Unmarshal(resp, &userDetails); err != nil {
-		log.Println("getUserName unmarshal error", err.String())
-		return
+	if screenName, err = c.tw.getUserName(uid); err == nil {
+		c.userMap[uid] = screenName
 	}
-	return userDetails["screen_name"].(string), nil
+	return
 }
 
 
-// if uid != 0, search by uid, else by screenName.
-func (c *FollowersCrawler) getUserFollowers(uid int64, screenName string) (uf bson.Doc, err os.Error) {
-	param := make(web.ParamMap)
-	if uid != 0 {
-		param.Set("id", strconv.Itoa64(uid))
-	} else {
-		param.Set("screen_name", screenName)
-	}
-	url := TWITTER_API_BASE + "/followers/ids.json"
-
-	var resp []byte
-	if resp, err = c.twitterGet(url, param); err != nil {
+func (c *FollowersCrawler) saveUserFollowers(uf bson.Doc) (err os.Error) {
+	if dryRunMode {
 		return
 	}
-	var followers []int64
-	if err = json.Unmarshal(resp, &followers); err != nil {
-		log.Println("unmarshal error", err.String())
-		log.Println("output was:", resp)
-		return
-	}
-
-	uf = bson.Doc{"uid": uid, "followers": followers, "date": time.UTC()}
 	if err = c.db.Insert(uf); err != nil {
 		log.Println("Insert error", err.String())
 	}
 	return
 }
 
-func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson.Doc) {
+func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson.Doc) (unfollowers []int64) {
+	unfollowers = make([]int64, 0)
+
 	fOld, ok := prevUf["followers"]
 	if !ok || fOld == nil {
 		log.Printf("fOld: no followers %+v\n", fOld)
@@ -157,8 +86,10 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 		neww[uid] = 1
 	}
 
-	if len(fOld.([]interface{})) > len(neww)+maxUnfollows {
-		panic("too many unfollows")
+	diff := len(fOld.([]interface{})) - len(neww)
+	log.Printf("diff %d, max %d", diff, maxUnfollows)
+	if diff > maxUnfollows {
+		panic(fmt.Sprintf("too many unfollows %d > %d", diff, maxUnfollows))
 	}
 
 	// We don't care about new followers, only missing ones.
@@ -172,7 +103,6 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 			continue
 		}
 		if _, ok := neww[unfollower]; !ok {
-			log.Println("SOMEONE STOPPED FOLLOWING OUR USER", strconv.Itoa64(abandonedUser))
 			if ignore, _ := strconv.Atoi64(ignoredUsers); ignore == unfollower {
 				log.Println("(ignored)")
 				continue
@@ -181,34 +111,45 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 				log.Println("ignored@@@@@@@@@@@@@@@")
 				continue
 			}
-			if screenName, err := c.getUserName(unfollower); err != nil {
-				log.Println(".. but we couldn't get the screenName:", err.String())
-			} else {
-				log.Println("====>> THIS SUCKER STOP FOLLOWING THEM:", screenName, unfollower)
-				// TODO(nictuku): mark database entry as processed if there were no errors.
-				c.NotifyUnfollower(abandonedUser, screenName)
-			}
+			unfollowers = append(unfollowers, unfollower)
 		}
 	}
+	return
 }
 
-func (c *FollowersCrawler) NotifyUnfollower(abandonedUser int64, unfollowerScreenName string) (err os.Error) {
+// Notify user and mark unfollow in the database.
+func (c *FollowersCrawler) ProcessUnfollow(abandonedUser int64, unfollower int64) (err os.Error) {
+	log.Printf("%v unfollowed by %v", abandonedUser, unfollower)
+	if c.db.GetWasUnfollowNotified(abandonedUser, unfollower) {
+		log.Println("already notified. ignoring")
+		return
+	}
+	if err = c.NotifyUnfollower(abandonedUser, unfollower); err != nil {
+		return err
+	}
+	if !dryRunMode {
+		if err = c.db.MarkUnfollowNotified(abandonedUser, unfollower); err != nil {
+			return err
+		}
+	}
+	return
+}
+
+func (c *FollowersCrawler) NotifyUnfollower(abandonedUser, unfollower int64) (err os.Error) {
+	abandonedName, err := c.getUserName(abandonedUser)
+	if err != nil {
+		log.Printf("c.getUserName(abandonedUser) err: %v", err)
+		return
+	}
+	unfollowerName, err := c.getUserName(unfollower)
+	if err != nil {
+		log.Printf("c.getUserName(unfollower) err: %v", err)
+		return
+	}
 	if dryRunMode || !notifyUsers {
 		return
 	}
-	url := TWITTER_API_BASE + "/direct_messages/new.json"
-	abandoned, err := c.getUserName(abandonedUser)
-	log.Printf("%s unfollowed %s, notifying.\n", unfollowerScreenName, abandoned)
-	param := make(web.ParamMap)
-	param.Set("screen_name", abandoned)
-	// TODO(nictuku): translate messages.
-	param.Set("text", fmt.Sprintf("Xiiii.. você não está mais sendo seguido por @%s :-(.", unfollowerScreenName))
-	var p []byte
-	if p, err = c.twitterPost(url, param); err != nil {
-		log.Println("notify unfollower error:", err.String())
-		log.Println("response", string(p))
-	}
-	return
+	return c.tw.NotifyUnfollower(abandonedName, unfollowerName)
 }
 
 func (c *FollowersCrawler) FollowUser(uid int64) (err os.Error) {
@@ -219,18 +160,9 @@ func (c *FollowersCrawler) FollowUser(uid int64) (err os.Error) {
 		log.Println("Already trying to follow user. Skipping follow request.")
 		return
 	}
-	url := TWITTER_API_BASE + "/friendships/create.json"
-	param := make(web.ParamMap)
-	param.Set("user_id", strconv.Itoa64(uid))
-	param.Set("follow", "true")
-	var p []byte
-	log.Println("Trying to follow user", uid)
-	if p, err = c.twitterPost(url, param); err != nil {
-		log.Println("follower user error:", err.String())
-		fmt.Println("response", string(p))
-		return err
+	if err = c.tw.FollowUser(uid); err == nil {
+		c.db.MarkPendingFollow(uid)
 	}
-	c.db.MarkPendingFollow(uid)
 	return
 }
 
@@ -242,9 +174,7 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 			log.Printf("db.GetUserFollowers err=%s, userId=%d\n", err.String(), u)
 			prevUf = nil
 		}
-		// TODO(nictuku): Currently, interrupted executions will update the database even though the users were
-		// not notified. Need to either mark entries as 'processed' or only save them on the database post fact.
-		if newUf, err = c.getUserFollowers(u, ""); err != nil {
+		if newUf, err = c.tw.getUserFollowers(u, ""); err != nil {
 			if strings.Contains(err.String(), " 401") {
 				// User's follower list is blocked. Need to request access.
 				c.FollowUser(u)
@@ -254,19 +184,28 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 			newUf = nil
 		}
 		if prevUf != nil && newUf != nil {
-			c.DiffFollowers(u, prevUf, newUf)
+			for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
+				if err := c.ProcessUnfollow(u, unfollower); err != nil {
+					log.Printf("ProcessUnfollow failure, userId=%d, unfollower=%v. Err: %v", u, unfollower, err)
+				}
+			}
+			if err := c.saveUserFollowers(newUf); err != nil {
+				log.Printf("c.saveUserFollowers(), u=%v, err=%v", u, err)
+			}
 		}
+
 	}
 	return
 }
 
 // Find everyone who follows us, so we know who to crawl.
 func (c *FollowersCrawler) FindOurUsers(uid int64) (err os.Error) {
-	//c.ourUsers = []int64{217554981}
-	//return nil
-	userFollowers, err := c.getUserFollowers(uid, "")
+	userFollowers, err := c.tw.getUserFollowers(uid, "")
 	if err != nil {
 		return err
+	}
+	if err := c.saveUserFollowers(userFollowers); err != nil {
+		log.Printf("c.saveUserFollowers(), u=%v, err=%v", uid, err)
 	}
 	c.ourUsers = userFollowers["followers"].([]int64)
 	return
@@ -285,51 +224,12 @@ func (c *FollowersCrawler) TestStuff() {
 	}
 }
 
-func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.Error) {
-	err = httpErr
-	if err != nil {
-		log.Println(err.String())
-		return nil, err
-	}
-	p, err = ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	rateLimitStats(resp)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode != 200 {
-		log.Printf("Response: %s\n", string(p))
-		err = os.NewError(fmt.Sprintf("Server Error code: %d", resp.StatusCode))
-		if err == nil {
-			err = os.NewError("HTTP Error " + string(resp.StatusCode) + " (error state _not_ reported by http library)")
-		}
-		// Better ignore whatever response was given.
-		return nil, err
-	}
-	return p, nil
-
-}
-
-func rateLimitStats(resp *http.Response) {
-	if resp == nil {
-		return
-	}
-	curr := time.Seconds()
-	reset, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Reset"))
-	remaining, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Remaining"))
-	if remaining < 1 && reset-curr > 0 {
-		log.Printf("Twitter API limits exceeded. Sleeping for %d seconds.\n", reset-curr)
-		time.Sleep(reset - curr*1e9)
-	}
-}
-
-
 func init() {
 	flag.BoolVar(&dryRunMode, "dryrun", true,
 		"Don't make changes to the database.")
 	flag.BoolVar(&notifyUsers, "notifyUsers", true,
 		"Notify unfollows to users.")
-	flag.IntVar(&maxUnfollows, "maxUnfollows", 50, "Panic if global unfollow number exceeds this.")
+	flag.IntVar(&maxUnfollows, "maxUnfollows", 50, "Panic if the number of unfollows for a user exceeds this.")
 	// TODO(nictuku): Make this a list.
 	flag.StringVar(&ignoredUsers, "ignoreUsers", "118058049",
 		"UserID to ignore (flaky twitter results)")
