@@ -15,6 +15,7 @@
 package javaitarde
 
 import (
+	"flag"
 	"log"
 	"os"
 	"time"
@@ -22,12 +23,13 @@ import (
 	"github.com/garyburd/go-mongo"
 )
 
-const (
-	db                            = "unfollow3"
-	USER_FOLLOWERS_TABLE          = db + ".user_followers"
-	USER_FOLLOWERS_COUNTERS_TABLE = db + ".user_followers_counters"
-	FOLLOW_PENDING_TABLE          = db + ".follow_pending"
-)
+var db string
+
+var USER_FOLLOWERS_TABLE string
+var USER_FOLLOWERS_COUNTERS_TABLE string
+var FOLLOW_PENDING_TABLE string
+var PREVIOUS_UNFOLLOWS_TABLE string
+
 
 type FollowersDatabase struct {
 	mongoConn mongo.Conn
@@ -90,6 +92,24 @@ func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, er
 	return false, err
 }
 
+func (c *FollowersDatabase) GetWasUnfollowNotified(abandonedUser, unfollower int64) (wasNotified bool) {
+	query := map[string]int64{
+		"uid":        abandonedUser,
+		"unfollower": unfollower,
+	}
+	cursor, _ := c.mongoConn.Find(PREVIOUS_UNFOLLOWS_TABLE, query, nil)
+	defer cursor.Close()
+	return cursor.HasNext()
+}
+
+func (c *FollowersDatabase) MarkUnfollowNotified(abandonedUser, unfollower int64) os.Error {
+	doc := map[string]int64{
+		"uid":        abandonedUser,
+		"unfollower": unfollower,
+	}
+	return mongo.SafeInsert(c.mongoConn, PREVIOUS_UNFOLLOWS_TABLE, nil, doc)
+}
+
 func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf map[string]interface{}, err os.Error) {
 	order := map[string]int64{"date": 1}
 	q := map[string]interface{}{"uid": uid}
@@ -105,4 +125,17 @@ func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf map[string]interface
 		log.Println("followers not set?")
 	}
 	return
+}
+
+func SetupDb() {
+	USER_FOLLOWERS_TABLE = db + ".user_followers"
+	USER_FOLLOWERS_COUNTERS_TABLE = db + ".user_followers_counters"
+	FOLLOW_PENDING_TABLE = db + ".follow_pending"
+	PREVIOUS_UNFOLLOWS_TABLE = db + ".previous_unfollows"
+
+}
+
+func init() {
+	flag.StringVar(&db, "database", "unfollowDEV",
+		"Name of mongo database.")
 }

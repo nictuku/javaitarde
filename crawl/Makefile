@@ -5,5 +5,6 @@ GOFILES=\
     crawl.go\
     database.go\
     settings.go\
+    twitter.go\
 
 include $(GOROOT)/src/Make.pkg
