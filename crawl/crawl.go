@@ -32,8 +32,8 @@ var notifyUsers bool
 
 type FollowersCrawler struct {
 	ourUsers []int64
-	db       *FollowersDatabase
 	userMap  map[int64]string
+	db       *FollowersDatabase
 	tw       *twitterClient
 }
 
@@ -44,6 +44,51 @@ func NewFollowersCrawler() *FollowersCrawler {
 		ourUsers: make([]int64, 0),
 		userMap:  map[int64]string{},
 	}
+}
+
+// Find everyone who follows us, so we know who to crawl.
+func (c *FollowersCrawler) FindOurUsers(uid int64) (err os.Error) {
+	userFollowers, err := c.tw.getUserFollowers(uid, "")
+	if err != nil {
+		return err
+	}
+	if err := c.saveUserFollowers(userFollowers); err != nil {
+		log.Printf("c.saveUserFollowers(), u=%v, err=%v", uid, err)
+	}
+	c.ourUsers = userFollowers["followers"].([]int64)
+	return
+}
+
+func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
+	for _, u := range c.ourUsers {
+		prevUf := bson.Doc{}
+		newUf := bson.Doc{}
+		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
+			log.Printf("db.GetUserFollowers err=%s, userId=%d\n", err.String(), u)
+			prevUf = nil
+		}
+		if newUf, err = c.tw.getUserFollowers(u, ""); err != nil {
+			if strings.Contains(err.String(), " 401") {
+				// User's follower list is blocked. Need to request access.
+				c.FollowUser(u)
+			} else {
+				log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.String(), u)
+			}
+			newUf = nil
+		}
+		if prevUf != nil && newUf != nil {
+			for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
+				if err := c.ProcessUnfollow(u, unfollower); err != nil {
+					log.Printf("ProcessUnfollow failure, userId=%d, unfollower=%v. Err: %v", u, unfollower, err)
+				}
+			}
+			if err := c.saveUserFollowers(newUf); err != nil {
+				log.Printf("c.saveUserFollowers(), u=%v, err=%v", u, err)
+			}
+		}
+
+	}
+	return
 }
 
 func (c *FollowersCrawler) getUserName(uid int64) (screenName string, err os.Error) {
@@ -163,51 +208,6 @@ func (c *FollowersCrawler) FollowUser(uid int64) (err os.Error) {
 	if err = c.tw.FollowUser(uid); err == nil {
 		c.db.MarkPendingFollow(uid)
 	}
-	return
-}
-
-func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
-	for _, u := range c.ourUsers {
-		prevUf := bson.Doc{}
-		newUf := bson.Doc{}
-		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
-			log.Printf("db.GetUserFollowers err=%s, userId=%d\n", err.String(), u)
-			prevUf = nil
-		}
-		if newUf, err = c.tw.getUserFollowers(u, ""); err != nil {
-			if strings.Contains(err.String(), " 401") {
-				// User's follower list is blocked. Need to request access.
-				c.FollowUser(u)
-			} else {
-				log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.String(), u)
-			}
-			newUf = nil
-		}
-		if prevUf != nil && newUf != nil {
-			for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
-				if err := c.ProcessUnfollow(u, unfollower); err != nil {
-					log.Printf("ProcessUnfollow failure, userId=%d, unfollower=%v. Err: %v", u, unfollower, err)
-				}
-			}
-			if err := c.saveUserFollowers(newUf); err != nil {
-				log.Printf("c.saveUserFollowers(), u=%v, err=%v", u, err)
-			}
-		}
-
-	}
-	return
-}
-
-// Find everyone who follows us, so we know who to crawl.
-func (c *FollowersCrawler) FindOurUsers(uid int64) (err os.Error) {
-	userFollowers, err := c.tw.getUserFollowers(uid, "")
-	if err != nil {
-		return err
-	}
-	if err := c.saveUserFollowers(userFollowers); err != nil {
-		log.Printf("c.saveUserFollowers(), u=%v, err=%v", uid, err)
-	}
-	c.ourUsers = userFollowers["followers"].([]int64)
 	return
 }
 
