@@ -184,8 +184,11 @@ func rateLimitStats(resp *http.Response) {
 		return
 	}
 	curr := time.Seconds()
-	reset, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Reset"))
-	remaining, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Remaining"))
+	reset, _ := strconv.Atoi64(resp.Header.Get("X-RateLimit-Reset"))
+	remaining, _ := strconv.Atoi64(resp.Header.Get("X-RateLimit-Remaining"))
+	if reset == 0 || remaining == 0 {
+		return
+	}
 	if remaining < 1 && reset-curr > 0 {
 		log.Printf("Twitter API limits exceeded. Sleeping for %d seconds.\n", reset-curr)
 		time.Sleep((reset - curr) * 1e9)
