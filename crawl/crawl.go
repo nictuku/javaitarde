@@ -174,11 +174,12 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf *use
 // Notify user and mark unfollow in the database.
 func (c *FollowersCrawler) ProcessUnfollow(abandonedUser int64, unfollower int64) (err os.Error) {
 	log.Printf("%v unfollowed by %v", abandonedUser, unfollower)
-	if dryRunMode {
-		// TODO: Remove after we cache screen_name => id data.
-		log.Println("dry run, skipping ProcessUnfollow")
+	
+	// TODO: Remove after we start caching screen_name => id data.
+	if dryRunMode || !notifyUsers {
 		return
 	}
+
 	if c.db.GetWasUnfollowNotified(abandonedUser, unfollower) {
 		log.Println("already notified. ignoring")
 		return

@@ -50,7 +50,6 @@ func newTwitterClient() *twitterClient {
 func (tw *twitterClient) twitterGet(url string, param web.ParamMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(tw.twitterToken, "GET", url, param)
 	url = url + "?" + param.FormEncodedString()
-	// TODO: Add timeout. 
 	var resp *http.Response
 	done := make(chan bool, 1)
 	go func() {
@@ -74,8 +73,26 @@ func (tw *twitterClient) twitterGet(url string, param web.ParamMap) (p []byte, e
 // Data in param must be URL escaped already.
 func (tw *twitterClient) twitterPost(url string, param web.ParamMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(tw.twitterToken, "POST", url, param)
-	//log.Println(param.StringMap())
-	return readHttpResponse(http.PostForm(url, param.StringMap()))
+
+	// TODO: remove this dupe.
+	var resp *http.Response
+	done := make(chan bool, 1)
+	go func() {
+		resp, err = http.PostForm(url, param.StringMap())
+		done <- true
+	}()
+
+	timeout := time.After(TWITTER_GET_TIMEOUT * 1e9) // post in this case.
+	select {
+	case <-done:
+		break
+	case <-timeout:
+		return nil, os.NewError("http POST timed out - " + url)
+	}
+	if resp == nil {
+		panic("oops")
+	}
+	return readHttpResponse(resp, err)
 }
 
 //func (c *FollowersCrawler) getUserId(screen_name string) (uid int64, err os.Error) {
