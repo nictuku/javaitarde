@@ -19,7 +19,6 @@ import (
 	"log"
 	"os"
 	"time"
-	"github.com/edsrzf/go-bson"
 	"github.com/garyburd/go-mongo"
 )
 
@@ -46,7 +45,7 @@ func NewFollowersDatabase() *FollowersDatabase {
 
 // Insert updates two collecitons: the user followers table, and the user followers table counters. 
 // The first will be garbage collected later to remove older items. The counters table will be kept forever.
-func (c *FollowersDatabase) Insert(uf bson.Doc) (err os.Error) {
+func (c *FollowersDatabase) Insert(uf *userFollowers) (err os.Error) {
 	if dryRunMode {
 		return
 	}
@@ -56,19 +55,19 @@ func (c *FollowersDatabase) Insert(uf bson.Doc) (err os.Error) {
 	}
 
 	// Update counters table.
-	counter := bson.Doc{
-		"uid":            uf["uid"],
-		"date":           uf["date"],
-		"followerscount": len(uf["followers"].([]int64)),
+	counter := map[string]interface{}{
+		"uid":            uf.Uid,
+		"date":           uf.Date,
+		"followerscount": len(uf.Followers),
 	}
 	return mongo.SafeInsert(c.mongoConn, USER_FOLLOWERS_COUNTERS_TABLE, nil, counter)
 }
 
 
 func (c *FollowersDatabase) MarkPendingFollow(uid int64) os.Error {
-	doc := bson.Doc{
+	doc := map[string]interface{}{
 		"uid":  uid,
-		"date": time.UTC(),
+		"date": time.UTC().Seconds(),
 	}
 	return mongo.SafeInsert(c.mongoConn, FOLLOW_PENDING_TABLE, nil, doc)
 }
@@ -84,7 +83,7 @@ func (c *FollowersDatabase) Reconnect() {
 }
 
 func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, err os.Error) {
-	cursor, err := c.mongoConn.Find(FOLLOW_PENDING_TABLE, map[string]int64{"uid": uid}, nil)
+	cursor, err := c.mongoConn.Find(FOLLOW_PENDING_TABLE, map[string]int64{"Uid": uid}, nil)
 	defer cursor.Close()
 	if cursor.HasNext() {
 		return true, nil
@@ -94,8 +93,8 @@ func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, er
 
 func (c *FollowersDatabase) GetWasUnfollowNotified(abandonedUser, unfollower int64) (wasNotified bool) {
 	query := map[string]int64{
-		"uid":        abandonedUser,
-		"unfollower": unfollower,
+		"Uid":        abandonedUser,
+		"Unfollower": unfollower,
 	}
 	cursor, _ := c.mongoConn.Find(PREVIOUS_UNFOLLOWS_TABLE, query, nil)
 	defer cursor.Close()
@@ -110,8 +109,8 @@ func (c *FollowersDatabase) MarkUnfollowNotified(abandonedUser, unfollower int64
 	return mongo.SafeInsert(c.mongoConn, PREVIOUS_UNFOLLOWS_TABLE, nil, doc)
 }
 
-func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf map[string]interface{}, err os.Error) {
-	order := map[string]int64{"date": 1}
+func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf *userFollowers, err os.Error) {
+	order := map[string]int64{"date": -1}
 	q := map[string]interface{}{"uid": uid}
 	query := map[string]interface{}{"$query": q, "$orderby": order}
 
@@ -121,10 +120,16 @@ func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf map[string]interface
 		return
 	}
 	err = cursor.Next(&uf)
-	if _, ok := uf["followers"]; !ok {
-		log.Println("followers not set?")
+	if uf == nil || uf.Followers == nil {
+		log.Println("followers not found?")
 	}
 	return
+}
+
+// For testing.
+func SetupTestDb(testDb string) {
+	db = testDb
+	SetupDb()
 }
 
 func SetupDb() {
@@ -136,6 +141,6 @@ func SetupDb() {
 }
 
 func init() {
-	flag.StringVar(&db, "database", "unfollowDEV",
+	flag.StringVar(&db, "database", "unfollow3",
 		"Name of mongo database.")
 }

@@ -16,7 +16,6 @@ package javaitarde
 
 import (
 	"fmt"
-	"github.com/edsrzf/go-bson"
 	"github.com/garyburd/twister/oauth"
 	"github.com/garyburd/twister/web"
 	"http"
@@ -29,7 +28,8 @@ import (
 )
 
 const (
-	TWITTER_API_BASE = "http://api.twitter.com/1"
+	TWITTER_API_BASE    = "http://api.twitter.com/1"
+	TWITTER_GET_TIMEOUT = 10 // seconds.
 )
 
 var oauthClient = oauth.Client{
@@ -50,7 +50,24 @@ func newTwitterClient() *twitterClient {
 func (tw *twitterClient) twitterGet(url string, param web.ParamMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(tw.twitterToken, "GET", url, param)
 	url = url + "?" + param.FormEncodedString()
-	resp, _, err := http.Get(url)
+	// TODO: Add timeout. 
+	var resp *http.Response
+	done := make(chan bool, 1)
+	go func() {
+		resp, _, err = http.Get(url)
+		done <- true
+	}()
+
+	timeout := time.After(TWITTER_GET_TIMEOUT * 1e9) //
+	select {
+	case <-done:
+		break
+	case <-timeout:
+		return nil, os.NewError("http Get timed out - " + url)
+	}
+	if resp == nil {
+		panic("oops")
+	}
 	return readHttpResponse(resp, err)
 }
 
@@ -98,9 +115,14 @@ func (tw *twitterClient) getUserName(uid int64) (screenName string, err os.Error
 	return
 }
 
+type userFollowers struct {
+	Uid       int64   "uid"
+	Date      int64   "date"
+	Followers []int64 "followers"
+}
 
 // if uid != 0, search by uid, else by screenName.
-func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf bson.Doc, err os.Error) {
+func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *userFollowers, err os.Error) {
 	param := make(web.ParamMap)
 	if uid != 0 {
 		param.Set("id", strconv.Itoa64(uid))
@@ -119,7 +141,7 @@ func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf bson
 		log.Println("output was:", resp)
 		return
 	}
-	return bson.Doc{"uid": uid, "followers": followers, "date": time.UTC()}, nil
+	return &userFollowers{uid, time.UTC().Seconds(), followers}, nil
 }
 
 // Should be "sendDirectMessage".
@@ -168,6 +190,7 @@ func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.E
 	}
 	if resp.StatusCode != 200 {
 		log.Printf("Response: %s\n", string(p))
+		log.Printf("Response Header: %+v", resp.Header)
 		err = os.NewError(fmt.Sprintf("Server Error code: %d", resp.StatusCode))
 		if err == nil {
 			err = os.NewError("HTTP Error " + string(resp.StatusCode) + " (error state _not_ reported by http library)")
