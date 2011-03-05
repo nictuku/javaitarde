@@ -192,6 +192,21 @@ func (tw *twitterClient) FollowUser(uid int64) (err os.Error) {
 	return
 }
 
+
+func parseResponseError(p []byte) string {
+	var r map[string]string
+	if err := json.Unmarshal(p, &r); err != nil {
+		log.Printf("parseResponseError json.Unmarshal error: %v", err)
+		return ""
+	}
+	e, ok := r["error"]
+	if !ok {
+		return ""
+	}
+	return e
+
+}
+
 func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.Error) {
 	err = httpErr
 	if err != nil {
@@ -205,13 +220,11 @@ func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.E
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		log.Printf("Response: %s\n", string(p))
-		log.Printf("Response Header: %+v", resp.Header)
-		err = os.NewError(fmt.Sprintf("Server Error code: %d", resp.StatusCode))
-		if err == nil {
-			err = os.NewError("HTTP Error " + string(resp.StatusCode) + " (error state _not_ reported by http library)")
+		e := parseResponseError(p)
+		if e == "" {
+			e = "unknown"
 		}
-		// Better ignore whatever response was given.
+		err = os.NewError(fmt.Sprintf("Server Error code: %d; msg: %v", resp.StatusCode, e))
 		return nil, err
 	}
 	return p, nil
