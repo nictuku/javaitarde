@@ -53,8 +53,6 @@ func (c *FollowersCrawler) FindOurUsers(uid int64) (err os.Error) {
 	}
 	if err := c.saveUserFollowers(uf); err != nil {
 		log.Printf("c.saveUserFollowers(), u=%v, err=%v", uid, err)
-	} else {
-		log.Printf("SAVED OUR USERS %+v", uf)
 	}
 	c.ourUsers = uf.Followers
 	return
@@ -137,7 +135,6 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf *use
 	fNew := newUf.Followers
 
 	diff := len(fOld) - len(fNew)
-	log.Printf("diff %d, max %d", diff, maxUnfollows)
 	if diff > maxUnfollows {
 		panic(fmt.Sprintf("too many unfollows %d > %d", diff, maxUnfollows))
 	}
@@ -173,8 +170,6 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf *use
 
 // Notify user and mark unfollow in the database.
 func (c *FollowersCrawler) ProcessUnfollow(abandonedUser int64, unfollower int64) (err os.Error) {
-	log.Printf("%v unfollowed by %v", abandonedUser, unfollower)
-	
 	// TODO: Remove after we start caching screen_name => id data.
 	if dryRunMode || !notifyUsers {
 		return

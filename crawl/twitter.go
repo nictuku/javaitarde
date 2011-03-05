@@ -164,7 +164,6 @@ func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *use
 // Should be "sendDirectMessage".
 func (tw *twitterClient) NotifyUnfollower(abandonedName, unfollowerName string) (err os.Error) {
 	url := TWITTER_API_BASE + "/direct_messages/new.json"
-	log.Printf("%s unfollowed %s, notifying.\n", unfollowerName, abandonedName)
 	param := make(web.ParamMap)
 	param.Set("screen_name", abandonedName)
 	// TODO(nictuku): translate messages.
