@@ -83,7 +83,7 @@ func (c *FollowersDatabase) Reconnect() {
 }
 
 func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, err os.Error) {
-	cursor, err := c.mongoConn.Find(FOLLOW_PENDING_TABLE, map[string]int64{"Uid": uid}, nil)
+	cursor, err := c.mongoConn.Find(FOLLOW_PENDING_TABLE, map[string]int64{"uid": uid}, nil)
 	defer cursor.Close()
 	if cursor.HasNext() {
 		return true, nil
@@ -93,8 +93,8 @@ func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, er
 
 func (c *FollowersDatabase) GetWasUnfollowNotified(abandonedUser, unfollower int64) (wasNotified bool) {
 	query := map[string]int64{
-		"Uid":        abandonedUser,
-		"Unfollower": unfollower,
+		"uid":        abandonedUser,
+		"unfollower": unfollower,
 	}
 	cursor, _ := c.mongoConn.Find(PREVIOUS_UNFOLLOWS_TABLE, query, nil)
 	defer cursor.Close()
