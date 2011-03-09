@@ -54,31 +54,12 @@ func (tw *twitterClient) twitterGet(url string, param web.ParamMap) (p []byte, e
 	return readHttpResponse(resp, err)
 }
 
-// Data in param must be URL escaped already.
+// twitterPost issues a POST query to twitter to the given url, using parameters from param. The params must be URL
+// escaped already.
 func (tw *twitterClient) twitterPost(url string, param web.ParamMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(tw.twitterToken, "POST", url, param)
-	//log.Println(param.StringMap())
 	return readHttpResponse(http.PostForm(url, param.StringMap()))
 }
-
-//func (c *FollowersCrawler) getUserId(screen_name string) (uid int64, err os.Error) {
-//	param := make(web.ParamMap)
-//	param.Set("screen_name", screen_name)
-//	url := TWITTER_API_BASE + "/users/show.json"
-//
-//	userDetails := map[string]interface{}{}
-//	var resp []byte
-//
-//	if resp, err = c.twitterGet(url, param); err != nil {
-//		log.Println("getUserId error", err.String())
-//		return
-//	}
-//	if err = json.Unmarshal(resp, &userDetails); err != nil {
-//		log.Println("getUserId unmarshal error", err.String())
-//		return
-//	}
-//	return int64(userDetails["id"].(float64)), nil
-//}
 
 func (tw *twitterClient) getUserName(uid int64) (screenName string, err os.Error) {
 	param := make(web.ParamMap)
@@ -86,9 +67,8 @@ func (tw *twitterClient) getUserName(uid int64) (screenName string, err os.Error
 	url := TWITTER_API_BASE + "/users/show.json"
 
 	userDetails := map[string]interface{}{}
-	var resp []byte
-
-	if resp, err = tw.twitterGet(url, param); err != nil {
+	resp, err := tw.twitterGet(url, param)
+	if err != nil {
 		return
 	}
 	if err = json.Unmarshal(resp, &userDetails); err != nil {
@@ -99,7 +79,8 @@ func (tw *twitterClient) getUserName(uid int64) (screenName string, err os.Error
 }
 
 
-// if uid != 0, search by uid, else by screenName.
+// getUserFollowers searches by uid if uid != 0, or by screenName.
+// TODO: Maybe make this two methods.
 func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf bson.Doc, err os.Error) {
 	param := make(web.ParamMap)
 	if uid != 0 {
@@ -109,10 +90,11 @@ func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf bson
 	}
 	url := TWITTER_API_BASE + "/followers/ids.json"
 
-	var resp []byte
-	if resp, err = tw.twitterGet(url, param); err != nil {
+	resp, err := tw.twitterGet(url, param)
+	if err != nil {
 		return
 	}
+
 	var followers []int64
 	if err = json.Unmarshal(resp, &followers); err != nil {
 		log.Println("unmarshal error", err.String())
@@ -122,16 +104,17 @@ func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf bson
 	return bson.Doc{"uid": uid, "followers": followers, "date": time.UTC()}, nil
 }
 
-// Should be "sendDirectMessage".
 func (tw *twitterClient) NotifyUnfollower(abandonedName, unfollowerName string) (err os.Error) {
+	// TODO: Should be "sendDirectMessage".
 	url := TWITTER_API_BASE + "/direct_messages/new.json"
 	log.Printf("%s unfollowed %s, notifying.\n", unfollowerName, abandonedName)
 	param := make(web.ParamMap)
 	param.Set("screen_name", abandonedName)
-	// TODO(nictuku): translate messages.
+	// TODO: translate messages.
 	param.Set("text", fmt.Sprintf("Xiiii.. você não está mais sendo seguido por @%s :-(.", unfollowerName))
-	var p []byte
-	if p, err = tw.twitterPost(url, param); err != nil {
+
+	p, err := tw.twitterPost(url, param)
+	if err != nil {
 		log.Println("notify unfollower error:", err.String())
 		log.Println("response", string(p))
 	} else {
@@ -145,9 +128,9 @@ func (tw *twitterClient) FollowUser(uid int64) (err os.Error) {
 	param := make(web.ParamMap)
 	param.Set("user_id", strconv.Itoa64(uid))
 	param.Set("follow", "true")
-	var p []byte
 	log.Println("Trying to follow user", uid)
-	if p, err = tw.twitterPost(url, param); err != nil {
+	p, err := tw.twitterPost(url, param)
+	if err != nil {
 		log.Println("follower user error:", err.String())
 		fmt.Println("response", string(p))
 	}
@@ -169,9 +152,6 @@ func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.E
 	if resp.StatusCode != 200 {
 		log.Printf("Response: %s\n", string(p))
 		err = os.NewError(fmt.Sprintf("Server Error code: %d", resp.StatusCode))
-		if err == nil {
-			err = os.NewError("HTTP Error " + string(resp.StatusCode) + " (error state _not_ reported by http library)")
-		}
 		// Better ignore whatever response was given.
 		return nil, err
 	}

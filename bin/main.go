@@ -15,15 +15,17 @@
 package main
 
 import (
-	"javaitarde"
+	_ "expvar"
 	"flag"
+	"javaitarde"
 	"log"
 	"time"
-	_ "expvar"
 )
 
-var hubUserUid int64
-var runContinuously bool
+var (
+	hubUserUid int64
+	runContinuously bool
+)
 
 func init() {
 	flag.Int64Var(&hubUserUid, "hubuid", 217554981,
@@ -40,7 +42,6 @@ func main() {
 	for {
 		crawler.FindOurUsers(hubUserUid)
 		crawler.GetAllUsersFollowers()
-		//crawler.TestStuff()
 		if !runContinuously {
 			break
 		}

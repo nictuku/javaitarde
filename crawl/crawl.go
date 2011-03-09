@@ -198,7 +198,7 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 	return
 }
 
-// Find everyone who follows us, so we know who to crawl.
+// FindOurUsers finds everyone who follows us, so we know who to crawl.
 func (c *FollowersCrawler) FindOurUsers(uid int64) (err os.Error) {
 	userFollowers, err := c.tw.getUserFollowers(uid, "")
 	if err != nil {
@@ -209,19 +209,6 @@ func (c *FollowersCrawler) FindOurUsers(uid int64) (err os.Error) {
 	}
 	c.ourUsers = userFollowers["followers"].([]int64)
 	return
-}
-
-func (c *FollowersCrawler) TestStuff() {
-	log.Println("gogo")
-	u, _ := c.db.GetUserFollowers(16196534)
-	for f1, f2 := range u["followers"].([]interface{}) {
-		if f2.(int64) == 118058049 {
-			log.Println(f1, f2)
-		}
-		if f2.(int64) < 1000 {
-			log.Println(f1, f2)
-		}
-	}
 }
 
 func init() {

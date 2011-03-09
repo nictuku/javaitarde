@@ -19,17 +19,18 @@ import (
 	"log"
 	"os"
 	"time"
+
 	"github.com/edsrzf/go-bson"
 	"github.com/garyburd/go-mongo"
 )
 
-var db string
-
-var USER_FOLLOWERS_TABLE string
-var USER_FOLLOWERS_COUNTERS_TABLE string
-var FOLLOW_PENDING_TABLE string
-var PREVIOUS_UNFOLLOWS_TABLE string
-
+var (
+	db                            string
+	USER_FOLLOWERS_TABLE          string
+	USER_FOLLOWERS_COUNTERS_TABLE string
+	FOLLOW_PENDING_TABLE          string
+	PREVIOUS_UNFOLLOWS_TABLE      string
+)
 
 type FollowersDatabase struct {
 	mongoConn mongo.Conn
@@ -44,7 +45,7 @@ func NewFollowersDatabase() *FollowersDatabase {
 	return &FollowersDatabase{mongoConn: conn}
 }
 
-// Insert updates two collecitons: the user followers table, and the user followers table counters. 
+// Insert updates two collections: the user followers table, and the user followers table counters. 
 // The first will be garbage collected later to remove older items. The counters table will be kept forever.
 func (c *FollowersDatabase) Insert(uf bson.Doc) (err os.Error) {
 	if dryRunMode {
