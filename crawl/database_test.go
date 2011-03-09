@@ -19,8 +19,15 @@ import (
 	"reflect"
 )
 
-var testUser = int64(8044162) // twitter.com/licio 
+var testUser = int64(112161284)
 
+const (
+	testDb = "unfollowDEV"
+)
+
+func init() {
+	SetupTestDb(testDb)
+}
 // This (flaky) test was created to reproduce a bug, that I later confirmed to
 // be in mongodb-unstable only.
 // https://github.com/edsrzf/mongogo/issues/closed#issue/2

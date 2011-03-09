@@ -16,7 +16,6 @@ package javaitarde
 
 import (
 	"fmt"
-	"github.com/edsrzf/go-bson"
 	"github.com/garyburd/twister/oauth"
 	"github.com/garyburd/twister/web"
 	"http"
@@ -29,7 +28,8 @@ import (
 )
 
 const (
-	TWITTER_API_BASE = "http://api.twitter.com/1"
+	TWITTER_API_BASE    = "http://api.twitter.com/1"
+	TWITTER_GET_TIMEOUT = 10 // seconds.
 )
 
 var oauthClient = oauth.Client{
@@ -50,7 +50,23 @@ func newTwitterClient() *twitterClient {
 func (tw *twitterClient) twitterGet(url string, param web.ParamMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(tw.twitterToken, "GET", url, param)
 	url = url + "?" + param.FormEncodedString()
-	resp, _, err := http.Get(url)
+	var resp *http.Response
+	done := make(chan bool, 1)
+	go func() {
+		resp, _, err = http.Get(url)
+		done <- true
+	}()
+
+	timeout := time.After(TWITTER_GET_TIMEOUT * 1e9) //
+	select {
+	case <-done:
+		break
+	case <-timeout:
+		return nil, os.NewError("http Get timed out - " + url)
+	}
+	if resp == nil {
+		panic("oops")
+	}
 	return readHttpResponse(resp, err)
 }
 
@@ -58,7 +74,26 @@ func (tw *twitterClient) twitterGet(url string, param web.ParamMap) (p []byte, e
 // escaped already.
 func (tw *twitterClient) twitterPost(url string, param web.ParamMap) (p []byte, err os.Error) {
 	oauthClient.SignParam(tw.twitterToken, "POST", url, param)
-	return readHttpResponse(http.PostForm(url, param.StringMap()))
+
+	// TODO: remove this dupe.
+	var resp *http.Response
+	done := make(chan bool, 1)
+	go func() {
+		resp, err = http.PostForm(url, param.StringMap())
+		done <- true
+	}()
+
+	timeout := time.After(TWITTER_GET_TIMEOUT * 1e9) // post in this case.
+	select {
+	case <-done:
+		break
+	case <-timeout:
+		return nil, os.NewError("http POST timed out - " + url)
+	}
+	if resp == nil {
+		panic("oops")
+	}
+	return readHttpResponse(resp, err)
 }
 
 func (tw *twitterClient) getUserName(uid int64) (screenName string, err os.Error) {
@@ -78,10 +113,15 @@ func (tw *twitterClient) getUserName(uid int64) (screenName string, err os.Error
 	return
 }
 
+type userFollowers struct {
+	Uid       int64   "uid"
+	Date      int64   "date"
+	Followers []int64 "followers"
+}
 
-// getUserFollowers searches by uid if uid != 0, or by screenName.
-// TODO: Maybe make this two methods.
-func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf bson.Doc, err os.Error) {
+// getUserFollowers retrieves the followers of a user. If uid != 0, uses the uid for searching, otherwise searches by
+// screenName.
+func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *userFollowers, err os.Error) {
 	param := make(web.ParamMap)
 	if uid != 0 {
 		param.Set("id", strconv.Itoa64(uid))
@@ -101,13 +141,12 @@ func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf bson
 		log.Println("output was:", resp)
 		return
 	}
-	return bson.Doc{"uid": uid, "followers": followers, "date": time.UTC()}, nil
+	return &userFollowers{uid, time.UTC().Seconds(), followers}, nil
 }
 
 func (tw *twitterClient) NotifyUnfollower(abandonedName, unfollowerName string) (err os.Error) {
 	// TODO: Should be "sendDirectMessage".
 	url := TWITTER_API_BASE + "/direct_messages/new.json"
-	log.Printf("%s unfollowed %s, notifying.\n", unfollowerName, abandonedName)
 	param := make(web.ParamMap)
 	param.Set("screen_name", abandonedName)
 	// TODO: translate messages.
@@ -137,6 +176,21 @@ func (tw *twitterClient) FollowUser(uid int64) (err os.Error) {
 	return
 }
 
+
+func parseResponseError(p []byte) string {
+	var r map[string]string
+	if err := json.Unmarshal(p, &r); err != nil {
+		log.Printf("parseResponseError json.Unmarshal error: %v", err)
+		return ""
+	}
+	e, ok := r["error"]
+	if !ok {
+		return ""
+	}
+	return e
+
+}
+
 func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.Error) {
 	err = httpErr
 	if err != nil {
@@ -150,9 +204,11 @@ func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.E
 		return nil, err
 	}
 	if resp.StatusCode != 200 {
-		log.Printf("Response: %s\n", string(p))
-		err = os.NewError(fmt.Sprintf("Server Error code: %d", resp.StatusCode))
-		// Better ignore whatever response was given.
+		e := parseResponseError(p)
+		if e == "" {
+			e = "unknown"
+		}
+		err = os.NewError(fmt.Sprintf("Server Error code: %d; msg: %v", resp.StatusCode, e))
 		return nil, err
 	}
 	return p, nil
@@ -164,11 +220,8 @@ func rateLimitStats(resp *http.Response) {
 		return
 	}
 	curr := time.Seconds()
-	reset, _ := strconv.Atoi64(resp.Header.Get("X-RateLimit-Reset"))
-	remaining, _ := strconv.Atoi64(resp.Header.Get("X-RateLimit-Remaining"))
-	if reset == 0 || remaining == 0 {
-		return
-	}
+	reset, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Reset"))
+	remaining, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Remaining"))
 	if remaining < 1 && reset-curr > 0 {
 		log.Printf("Twitter API limits exceeded. Sleeping for %d seconds.\n", reset-curr)
 		time.Sleep((reset - curr) * 1e9)

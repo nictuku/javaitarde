@@ -17,7 +17,6 @@ package javaitarde
 import (
 	"flag"
 	"fmt"
-	"github.com/edsrzf/go-bson"
 	"log"
 	"os"
 	"strconv"
@@ -32,8 +31,8 @@ var notifyUsers bool
 
 type FollowersCrawler struct {
 	ourUsers []int64
-	db       *FollowersDatabase
 	userMap  map[int64]string
+	db       *FollowersDatabase
 	tw       *twitterClient
 }
 
@@ -44,6 +43,58 @@ func NewFollowersCrawler() *FollowersCrawler {
 		ourUsers: make([]int64, 0),
 		userMap:  map[int64]string{},
 	}
+}
+
+// Find everyone who follows us, so we know who to crawl.
+func (c *FollowersCrawler) FindOurUsers(uid int64) (err os.Error) {
+	uf, err := c.tw.getUserFollowers(uid, "")
+	if err != nil {
+		return err
+	}
+	if err := c.saveUserFollowers(uf); err != nil {
+		log.Printf("c.saveUserFollowers(), u=%v, err=%v", uid, err)
+	}
+	c.ourUsers = uf.Followers
+	return
+}
+
+func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
+	for _, u := range c.ourUsers {
+		var prevUf *userFollowers
+		var newUf *userFollowers
+		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
+			log.Printf("GetAllUserFollowers err=%s, userId=%d\n", err.String(), u)
+			prevUf = nil
+		}
+		if newUf, err = c.tw.getUserFollowers(u, ""); err != nil {
+			if strings.Contains(err.String(), " 401") {
+				// User's follower list is blocked. Need to request access.
+				c.FollowUser(u)
+			} else {
+				log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.String(), u)
+			}
+			newUf = nil
+		}
+		if newUf == nil {
+			log.Printf("twitter followers not found for %d", u)
+			continue
+		}
+		if prevUf != nil {
+			for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
+				if err := c.ProcessUnfollow(u, unfollower); err != nil {
+					log.Printf("ProcessUnfollow failure, userId=%d, unfollower=%v. Err: %v", u, unfollower, err)
+					continue
+				}
+			}
+		}
+		// Only save to DB if all went fine.
+		if err := c.saveUserFollowers(newUf); err != nil {
+			log.Printf("c.saveUserFollowers(), u=%d, err=%v", u, err)
+			continue
+		}
+
+	}
+	return
 }
 
 func (c *FollowersCrawler) getUserName(uid int64) (screenName string, err os.Error) {
@@ -58,8 +109,9 @@ func (c *FollowersCrawler) getUserName(uid int64) (screenName string, err os.Err
 }
 
 
-func (c *FollowersCrawler) saveUserFollowers(uf bson.Doc) (err os.Error) {
+func (c *FollowersCrawler) saveUserFollowers(uf *userFollowers) (err os.Error) {
 	if dryRunMode {
+		log.Println("dryRunMode, skipping saveUserFollowers")
 		return
 	}
 	if err = c.db.Insert(uf); err != nil {
@@ -68,33 +120,32 @@ func (c *FollowersCrawler) saveUserFollowers(uf bson.Doc) (err os.Error) {
 	return
 }
 
-func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson.Doc) (unfollowers []int64) {
+func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf *userFollowers) (unfollowers []int64) {
 	unfollowers = make([]int64, 0)
 
-	fOld, ok := prevUf["followers"]
-	if !ok || fOld == nil {
-		log.Printf("fOld: no followers %+v\n", fOld)
+	if prevUf == nil || prevUf.Followers == nil {
+		log.Println("DiffFollowers: no old followers")
 		return
 	}
-	fNew := newUf["followers"]
-	if fNew == nil {
-		log.Println("fNew: no followers")
+	if newUf == nil || newUf.Followers == nil {
+		log.Println("DiffFollowers: no new followers")
 		return
 	}
-	neww := map[int64]int{}
-	for _, uid := range fNew.([]int64) {
-		neww[uid] = 1
-	}
+	fOld := prevUf.Followers
+	fNew := newUf.Followers
 
-	diff := len(fOld.([]interface{})) - len(neww)
-	log.Printf("diff %d, max %d", diff, maxUnfollows)
+	diff := len(fOld) - len(fNew)
 	if diff > maxUnfollows {
 		panic(fmt.Sprintf("too many unfollows %d > %d", diff, maxUnfollows))
 	}
 
+	newMap := map[int64]bool{}
+	for _, uid := range fNew {
+		newMap[uid] = true
+	}
+
 	// We don't care about new followers, only missing ones.
-	for _, uid := range fOld.([]interface{}) {
-		unfollower := uid.(int64)
+	for _, unfollower := range fOld {
 		if unfollower < 184 {
 			log.Println("ERROR while comparing user ", strconv.Itoa64(abandonedUser))
 			log.Println("ERROR: bogus uid found in old database: ", unfollower)
@@ -102,7 +153,7 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 			c.db.Reconnect()
 			continue
 		}
-		if _, ok := neww[unfollower]; !ok {
+		if _, ok := newMap[unfollower]; !ok {
 			if ignore, _ := strconv.Atoi64(ignoredUsers); ignore == unfollower {
 				log.Println("(ignored)")
 				continue
@@ -119,7 +170,11 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf bson
 
 // Notify user and mark unfollow in the database.
 func (c *FollowersCrawler) ProcessUnfollow(abandonedUser int64, unfollower int64) (err os.Error) {
-	log.Printf("%v unfollowed by %v", abandonedUser, unfollower)
+	// TODO: Remove after we start caching screen_name => id data.
+	if dryRunMode || !notifyUsers {
+		return
+	}
+
 	if c.db.GetWasUnfollowNotified(abandonedUser, unfollower) {
 		log.Println("already notified. ignoring")
 		return
@@ -127,10 +182,8 @@ func (c *FollowersCrawler) ProcessUnfollow(abandonedUser int64, unfollower int64
 	if err = c.NotifyUnfollower(abandonedUser, unfollower); err != nil {
 		return err
 	}
-	if !dryRunMode {
-		if err = c.db.MarkUnfollowNotified(abandonedUser, unfollower); err != nil {
-			return err
-		}
+	if err = c.db.MarkUnfollowNotified(abandonedUser, unfollower); err != nil {
+		return err
 	}
 	return
 }
@@ -163,51 +216,6 @@ func (c *FollowersCrawler) FollowUser(uid int64) (err os.Error) {
 	if err = c.tw.FollowUser(uid); err == nil {
 		c.db.MarkPendingFollow(uid)
 	}
-	return
-}
-
-func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
-	for _, u := range c.ourUsers {
-		prevUf := bson.Doc{}
-		newUf := bson.Doc{}
-		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
-			log.Printf("db.GetUserFollowers err=%s, userId=%d\n", err.String(), u)
-			prevUf = nil
-		}
-		if newUf, err = c.tw.getUserFollowers(u, ""); err != nil {
-			if strings.Contains(err.String(), " 401") {
-				// User's follower list is blocked. Need to request access.
-				c.FollowUser(u)
-			} else {
-				log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.String(), u)
-			}
-			newUf = nil
-		}
-		if prevUf != nil && newUf != nil {
-			for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
-				if err := c.ProcessUnfollow(u, unfollower); err != nil {
-					log.Printf("ProcessUnfollow failure, userId=%d, unfollower=%v. Err: %v", u, unfollower, err)
-				}
-			}
-			if err := c.saveUserFollowers(newUf); err != nil {
-				log.Printf("c.saveUserFollowers(), u=%v, err=%v", u, err)
-			}
-		}
-
-	}
-	return
-}
-
-// FindOurUsers finds everyone who follows us, so we know who to crawl.
-func (c *FollowersCrawler) FindOurUsers(uid int64) (err os.Error) {
-	userFollowers, err := c.tw.getUserFollowers(uid, "")
-	if err != nil {
-		return err
-	}
-	if err := c.saveUserFollowers(userFollowers); err != nil {
-		log.Printf("c.saveUserFollowers(), u=%v, err=%v", uid, err)
-	}
-	c.ourUsers = userFollowers["followers"].([]int64)
 	return
 }
 
