@@ -65,9 +65,6 @@ func (tw *twitterClient) twitterGet(url string, param url.Values) (p []byte, err
 	case <-timeout:
 		return nil, os.NewError("http Get timed out - " + url)
 	}
-	if resp == nil {
-		panic("oops")
-	}
 	return readHttpResponse(resp, err)
 }
 
@@ -90,9 +87,6 @@ func (tw *twitterClient) twitterPost(url string, param url.Values) (p []byte, er
 		break
 	case <-timeout:
 		return nil, os.NewError("http POST timed out - " + url)
-	}
-	if resp == nil {
-		panic("oops")
 	}
 	return readHttpResponse(resp, err)
 }
@@ -194,7 +188,11 @@ func parseResponseError(p []byte) string {
 func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.Error) {
 	err = httpErr
 	if err != nil {
-		log.Println(err.String())
+		log.Println(err)
+		return nil, err
+	}
+	if resp == nil {
+		err = os.NewError("Received null response from http library.")
 		return nil, err
 	}
 	p, err = ioutil.ReadAll(resp.Body)
