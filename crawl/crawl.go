@@ -23,7 +23,6 @@ import (
 	"strings"
 )
 
-
 var dryRunMode bool
 var ignoredUsers string
 var maxUnfollows int
@@ -107,7 +106,6 @@ func (c *FollowersCrawler) getUserName(uid int64) (screenName string, err os.Err
 	}
 	return
 }
-
 
 func (c *FollowersCrawler) saveUserFollowers(uf *userFollowers) (err os.Error) {
 	if dryRunMode {

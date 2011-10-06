@@ -16,8 +16,6 @@ package javaitarde
 
 import (
 	"fmt"
-	"github.com/garyburd/twister/oauth"
-	"github.com/garyburd/twister/web"
 	"http"
 	"io/ioutil"
 	"json"
@@ -25,6 +23,9 @@ import (
 	"os"
 	"strconv"
 	"time"
+	"url"
+
+	"github.com/garyburd/twister/oauth"
 )
 
 const (
@@ -47,13 +48,13 @@ func newTwitterClient() *twitterClient {
 	return &twitterClient{twitterToken: &oauth.Credentials{accessToken, accessTokenSecret}}
 }
 
-func (tw *twitterClient) twitterGet(url string, param web.ParamMap) (p []byte, err os.Error) {
+func (tw *twitterClient) twitterGet(url string, param url.Values) (p []byte, err os.Error) {
 	oauthClient.SignParam(tw.twitterToken, "GET", url, param)
-	url = url + "?" + param.FormEncodedString()
+	url = url + "?" + param.Encode()
 	var resp *http.Response
 	done := make(chan bool, 1)
 	go func() {
-		resp, _, err = http.Get(url)
+		resp, err = http.Get(url)
 		done <- true
 	}()
 
@@ -72,14 +73,14 @@ func (tw *twitterClient) twitterGet(url string, param web.ParamMap) (p []byte, e
 
 // twitterPost issues a POST query to twitter to the given url, using parameters from param. The params must be URL
 // escaped already.
-func (tw *twitterClient) twitterPost(url string, param web.ParamMap) (p []byte, err os.Error) {
+func (tw *twitterClient) twitterPost(url string, param url.Values) (p []byte, err os.Error) {
 	oauthClient.SignParam(tw.twitterToken, "POST", url, param)
 
 	// TODO: remove this dupe.
 	var resp *http.Response
 	done := make(chan bool, 1)
 	go func() {
-		resp, err = http.PostForm(url, param.StringMap())
+		resp, err = http.PostForm(url, param)
 		done <- true
 	}()
 
@@ -97,7 +98,7 @@ func (tw *twitterClient) twitterPost(url string, param web.ParamMap) (p []byte, 
 }
 
 func (tw *twitterClient) getUserName(uid int64) (screenName string, err os.Error) {
-	param := make(web.ParamMap)
+	param := make(url.Values)
 	param.Set("id", strconv.Itoa64(uid))
 	url := TWITTER_API_BASE + "/users/show.json"
 
@@ -122,7 +123,7 @@ type userFollowers struct {
 // getUserFollowers retrieves the followers of a user. If uid != 0, uses the uid for searching, otherwise searches by
 // screenName.
 func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *userFollowers, err os.Error) {
-	param := make(web.ParamMap)
+	param := make(url.Values)
 	if uid != 0 {
 		param.Set("id", strconv.Itoa64(uid))
 	} else {
@@ -146,13 +147,13 @@ func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *use
 
 func (tw *twitterClient) NotifyUnfollower(abandonedName, unfollowerName string) (err os.Error) {
 	// TODO: Should be "sendDirectMessage".
-	url := TWITTER_API_BASE + "/direct_messages/new.json"
-	param := make(web.ParamMap)
+	url_ := TWITTER_API_BASE + "/direct_messages/new.json"
+	param := make(url.Values)
 	param.Set("screen_name", abandonedName)
 	// TODO: translate messages.
 	param.Set("text", fmt.Sprintf("Xiiii.. você não está mais sendo seguido por @%s :-(.", unfollowerName))
 
-	p, err := tw.twitterPost(url, param)
+	p, err := tw.twitterPost(url_, param)
 	if err != nil {
 		log.Println("notify unfollower error:", err.String())
 		log.Println("response", string(p))
@@ -163,19 +164,18 @@ func (tw *twitterClient) NotifyUnfollower(abandonedName, unfollowerName string) 
 }
 
 func (tw *twitterClient) FollowUser(uid int64) (err os.Error) {
-	url := TWITTER_API_BASE + "/friendships/create.json"
-	param := make(web.ParamMap)
+	url_ := TWITTER_API_BASE + "/friendships/create.json"
+	param := make(url.Values)
 	param.Set("user_id", strconv.Itoa64(uid))
 	param.Set("follow", "true")
 	log.Println("Trying to follow user", uid)
-	p, err := tw.twitterPost(url, param)
+	p, err := tw.twitterPost(url_, param)
 	if err != nil {
 		log.Println("follower user error:", err.String())
 		fmt.Println("response", string(p))
 	}
 	return
 }
-
 
 func parseResponseError(p []byte) string {
 	var r map[string]string
@@ -220,8 +220,8 @@ func rateLimitStats(resp *http.Response) {
 		return
 	}
 	curr := time.Seconds()
-	reset, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Reset"))
-	remaining, _ := strconv.Atoi64(resp.GetHeader("X-RateLimit-Remaining"))
+	reset, _ := strconv.Atoi64(resp.Header.Get("X-RateLimit-Reset"))
+	remaining, _ := strconv.Atoi64(resp.Header.Get("X-RateLimit-Remaining"))
 	if remaining < 1 && reset-curr > 0 {
 		log.Printf("Twitter API limits exceeded. Sleeping for %d seconds.\n", reset-curr)
 		time.Sleep((reset - curr) * 1e9)

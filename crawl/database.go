@@ -63,7 +63,6 @@ func (c *FollowersDatabase) Insert(uf *userFollowers) (err os.Error) {
 	return mongo.SafeInsert(c.mongoConn, USER_FOLLOWERS_COUNTERS_TABLE, nil, counter)
 }
 
-
 func (c *FollowersDatabase) MarkPendingFollow(uid int64) os.Error {
 	doc := map[string]interface{}{
 		"uid":  uid,
