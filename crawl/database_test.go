@@ -31,11 +31,18 @@ func init() {
 // This (flaky) test was created to reproduce a bug, that I later confirmed to
 // be in mongodb-unstable only.
 // https://github.com/edsrzf/mongogo/issues/closed#issue/2
+// Also used to debug a problem with bson decoding.
 func TestMongo(t *testing.T) {
 	c := NewFollowersCrawler()
 	u, err := c.db.GetUserFollowers(testUser)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if u == nil {
+		t.Fatalf("db.GetUserFollowers(%s) returned nil. Verify if the test database is setup properly or if there's a bug in the javaitarde or go-mongo code", testUser)
+	}
+	if len(u.Followers) == 0 {
+		t.Fatal("No users found in test database. Verify if it's properly setup or if there is a problem with the mongo driver or server")
 	}
 	for i := 0; i < 100; i++ {
 		u2, _ := c.db.GetUserFollowers(testUser)

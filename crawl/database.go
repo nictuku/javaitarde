@@ -28,6 +28,7 @@ var (
 	USER_FOLLOWERS_COUNTERS_TABLE string
 	FOLLOW_PENDING_TABLE          string
 	PREVIOUS_UNFOLLOWS_TABLE      string
+	verboseMongo                  bool
 )
 
 type FollowersDatabase struct {
@@ -39,6 +40,9 @@ func NewFollowersDatabase() *FollowersDatabase {
 	if err != nil {
 		log.Println("mongo Connect error:", err.String())
 		panic("mongo conn err")
+	}
+	if verboseMongo {
+		conn = mongo.NewLoggingConn(conn)
 	}
 	return &FollowersDatabase{mongoConn: conn}
 }
@@ -109,18 +113,15 @@ func (c *FollowersDatabase) MarkUnfollowNotified(abandonedUser, unfollower int64
 }
 
 func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf *userFollowers, err os.Error) {
-	order := map[string]int64{"date": -1}
-	q := map[string]interface{}{"uid": uid}
-	query := map[string]interface{}{"$query": q, "$orderby": order}
-
-	cursor, err := c.mongoConn.Find(USER_FOLLOWERS_TABLE, query, nil)
-	if !cursor.HasNext() {
-		err = os.NewError("no result")
-		return
-	}
-	err = cursor.Next(&uf)
-	if uf == nil || uf.Followers == nil {
-		log.Println("followers not found?")
+	collection := mongo.Collection{c.mongoConn, USER_FOLLOWERS_TABLE, mongo.DefaultLastErrorCmd}
+	err = collection.Find(&mongo.QuerySpec{
+		Query: mongo.Doc{{"uid", uid}},
+		Sort:  mongo.Doc{{"date", -1}},
+	}).One(&uf)
+	if uf == nil {
+		log.Println("uf object remained nil. Bug in go-mongo?")
+	} else if uf.Followers == nil {
+		log.Println("uf.Followers is nil. Incorrect database schema or bson decoding?")
 	}
 	return
 }
@@ -142,4 +143,6 @@ func SetupDb() {
 func init() {
 	flag.StringVar(&db, "database", "unfollow3",
 		"Name of mongo database.")
+	flag.BoolVar(&verboseMongo, "verboseMongo", false,
+		"Log all mongo queries.")
 }

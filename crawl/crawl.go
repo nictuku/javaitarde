@@ -63,7 +63,10 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 		var newUf *userFollowers
 		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
 			log.Printf("GetAllUserFollowers err=%s, userId=%d\n", err.String(), u)
-			prevUf = nil
+			// Give up if we can't read from the database.
+			// This assumes that a new user will return an empty
+			// value, without errors.
+			continue
 		}
 		if newUf, err = c.tw.getUserFollowers(u, ""); err != nil {
 			if strings.Contains(err.String(), " 401") {
@@ -71,19 +74,13 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 				c.FollowUser(u)
 			} else {
 				log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.String(), u)
+				continue
 			}
-			newUf = nil
 		}
-		if newUf == nil {
-			log.Printf("twitter followers not found for %d", u)
-			continue
-		}
-		if prevUf != nil {
-			for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
-				if err := c.ProcessUnfollow(u, unfollower); err != nil {
-					log.Printf("ProcessUnfollow failure, userId=%d, unfollower=%v. Err: %v", u, unfollower, err)
-					continue
-				}
+		for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
+			if err := c.ProcessUnfollow(u, unfollower); err != nil {
+				log.Printf("ProcessUnfollow failure, userId=%d, unfollower=%v. Err: %v", u, unfollower, err)
+				continue
 			}
 		}
 		// Only save to DB if all went fine.

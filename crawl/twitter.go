@@ -109,9 +109,9 @@ func (tw *twitterClient) getUserName(uid int64) (screenName string, err os.Error
 }
 
 type userFollowers struct {
-	Uid       int64   "uid"
-	Date      int64   "date"
-	Followers []int64 "followers"
+	Uid       int64   `bson:"uid"`
+	Date      int64   `bson:"date"`
+	Followers []int64 `bson:"followers"`
 }
 
 // getUserFollowers retrieves the followers of a user. If uid != 0, uses the uid for searching, otherwise searches by
@@ -193,6 +193,7 @@ func readHttpResponse(resp *http.Response, httpErr os.Error) (p []byte, err os.E
 	}
 	if resp == nil {
 		err = os.NewError("Received null response from http library.")
+		log.Println(err)
 		return nil, err
 	}
 	p, err = ioutil.ReadAll(resp.Body)
