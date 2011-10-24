@@ -74,8 +74,8 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 				c.FollowUser(u)
 			} else {
 				log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.String(), u)
-				continue
 			}
+			continue
 		}
 		for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
 			if err := c.ProcessUnfollow(u, unfollower); err != nil {
@@ -105,6 +105,9 @@ func (c *FollowersCrawler) getUserName(uid int64) (screenName string, err os.Err
 }
 
 func (c *FollowersCrawler) saveUserFollowers(uf *userFollowers) (err os.Error) {
+	if uf == nil {
+		return os.NewError("saveUserFollowers() called with a nil `userFollowers` object.")
+	}
 	if dryRunMode {
 		log.Println("dryRunMode, skipping saveUserFollowers")
 		return
