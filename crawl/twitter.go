@@ -114,6 +114,11 @@ type userFollowers struct {
 	Followers []int64 `bson:"followers"`
 }
 
+type getFollowersResult struct {
+	Ids        []int64 `bson:"ids"`
+	NextCursor int64   `bson:"next_cursor"`
+}
+
 // getUserFollowers retrieves the followers of a user. If uid != 0, uses the uid for searching, otherwise searches by
 // screenName.
 func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *userFollowers, err os.Error) {
@@ -123,18 +128,31 @@ func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *use
 	} else {
 		param.Set("screen_name", screenName)
 	}
+	cursor := int64(-1)
 	url := TWITTER_API_BASE + "/followers/ids.json"
-
-	resp, err := tw.twitterGet(url, param)
-	if err != nil {
-		return
-	}
-
 	var followers []int64
-	if err = json.Unmarshal(resp, &followers); err != nil {
-		log.Println("unmarshal error", err.String())
-		log.Println("output was:", resp)
-		return
+	for {
+		param.Set("cursor", strconv.Itoa64(cursor))
+		resp, err := tw.twitterGet(url, param)
+		if err != nil {
+			return nil, err
+		}
+		var result getFollowersResult
+
+		if err = json.Unmarshal(resp, &result); err != nil {
+			log.Println("unmarshal error", err.String())
+			log.Println("output was:", string(resp))
+			return
+		}
+		if len(result.Ids) == 0 {
+			return nil, os.NewError("no followers.")
+		}
+		followers = append(followers, result.Ids...)
+		if result.NextCursor == 0 {
+			break
+			log.Println("done getting followers for", strconv.Itoa64(uid))
+		}
+		cursor = result.NextCursor
 	}
 	return &userFollowers{uid, time.UTC().Seconds(), followers}, nil
 }

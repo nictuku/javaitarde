@@ -114,10 +114,20 @@ func (c *FollowersDatabase) MarkUnfollowNotified(abandonedUser, unfollower int64
 
 func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf *userFollowers, err os.Error) {
 	collection := mongo.Collection{c.mongoConn, USER_FOLLOWERS_TABLE, mongo.DefaultLastErrorCmd}
-	err = collection.Find(&mongo.QuerySpec{
+	cursor, err := collection.Find(&mongo.QuerySpec{
 		Query: mongo.Doc{{"uid", uid}},
 		Sort:  mongo.Doc{{"date", -1}},
-	}).One(&uf)
+	}).Cursor()
+	if err != nil {
+		return
+	}
+	defer cursor.Close()
+
+	if !cursor.HasNext() {
+		return
+	}
+	err = cursor.Next(&uf)
+
 	if uf == nil {
 		log.Println("uf object remained nil. Bug in go-mongo?")
 	} else if uf.Followers == nil {

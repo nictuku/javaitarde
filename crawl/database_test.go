@@ -19,10 +19,10 @@ import (
 	"reflect"
 )
 
-var testUser = int64(112161284)
-
 const (
-	testDb = "unfollowDEV"
+	testDb           = "unfollowDEV"
+	testExistingUser = int64(112161284)
+	testMissingUser  = 666
 )
 
 func init() {
@@ -34,20 +34,31 @@ func init() {
 // Also used to debug a problem with bson decoding.
 func TestMongo(t *testing.T) {
 	c := NewFollowersCrawler()
-	u, err := c.db.GetUserFollowers(testUser)
+	u, err := c.db.GetUserFollowers(testExistingUser)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if u == nil {
-		t.Fatalf("db.GetUserFollowers(%s) returned nil. Verify if the test database is setup properly or if there's a bug in the javaitarde or go-mongo code", testUser)
+		t.Fatalf("db.GetUserFollowers(%s) returned nil. Verify if the test database is setup properly or if there's a bug in the javaitarde or go-mongo code", testExistingUser)
 	}
 	if len(u.Followers) == 0 {
 		t.Fatal("No users found in test database. Verify if it's properly setup or if there is a problem with the mongo driver or server")
 	}
 	for i := 0; i < 100; i++ {
-		u2, _ := c.db.GetUserFollowers(testUser)
+		u2, _ := c.db.GetUserFollowers(testExistingUser)
 		if !reflect.DeepEqual(u, u2) {
 			t.Errorf("#%d expected\n%v\ngot\n%v", i, u, u2)
 		}
+	}
+}
+
+func TestMongoMissingUser(t *testing.T) {
+	c := NewFollowersCrawler()
+	u, err := c.db.GetUserFollowers(testMissingUser) // Missing user.
+	if err != nil {
+		t.Fatal("Unexpected error", err)
+	}
+	if u != nil {
+		t.Error("GetUserFollower(testMissingUser) returned unexpected result")
 	}
 }

@@ -77,6 +77,10 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err os.Error) {
 			}
 			continue
 		}
+		if newUf == nil {
+			log.Println("No followers found in twitter for user", u)
+			continue
+		}
 		for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
 			if err := c.ProcessUnfollow(u, unfollower); err != nil {
 				log.Printf("ProcessUnfollow failure, userId=%d, unfollower=%v. Err: %v", u, unfollower, err)
