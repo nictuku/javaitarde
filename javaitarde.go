@@ -17,13 +17,13 @@ package main
 import (
 	_ "expvar"
 	"flag"
-	"javaitarde"
+	javaitarde "github.com/nictuku/javaitarde/crawl"
 	"log"
 	"time"
 )
 
 var (
-	hubUserUid int64
+	hubUserUid      int64
 	runContinuously bool
 )
 
@@ -36,7 +36,6 @@ func init() {
 
 func main() {
 	flag.Parse()
-	javaitarde.SetupDb()
 	crawler := javaitarde.NewFollowersCrawler()
 
 	for {

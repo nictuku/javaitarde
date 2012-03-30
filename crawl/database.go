@@ -16,44 +16,61 @@ package javaitarde
 
 import (
 	"flag"
+	"github.com/garyburd/go-mongo/mongo"
 	"log"
-	"os"
 	"time"
-	"github.com/garyburd/go-mongo"
 )
 
 var (
-	db                            string
-	USER_FOLLOWERS_TABLE          string
-	USER_FOLLOWERS_COUNTERS_TABLE string
-	FOLLOW_PENDING_TABLE          string
-	PREVIOUS_UNFOLLOWS_TABLE      string
-	verboseMongo                  bool
+	DbName       string
+	verboseMongo bool
 )
 
+const (
+	USER_FOLLOWERS_TABLE          = "user_followers"
+	USER_FOLLOWERS_COUNTERS_TABLE = "user_followers_counters"
+	FOLLOW_PENDING_TABLE          = "follow_pending"
+	PREVIOUS_UNFOLLOWS_TABLE      = "previous_unfollows"
+)
+
+func init() {
+	flag.StringVar(&DbName, "database", "unfollow3",
+		"Name of mongo database.")
+	flag.BoolVar(&verboseMongo, "verboseMongo", false,
+		"Log all mongo queries.")
+}
+
 type FollowersDatabase struct {
-	mongoConn mongo.Conn
+	userFollowers        mongo.Collection
+	userFollowersCounter mongo.Collection
+	followPending        mongo.Collection
+	previousUnfollows    mongo.Collection
 }
 
 func NewFollowersDatabase() *FollowersDatabase {
 	conn, err := mongo.Dial("127.0.0.1:27017")
 	if err != nil {
-		log.Println("mongo Connect error:", err.String())
+		log.Println("mongo Connect error:", err.Error())
 		panic("mongo conn err")
 	}
 	if verboseMongo {
 		conn = mongo.NewLoggingConn(conn)
 	}
-	return &FollowersDatabase{mongoConn: conn}
+	db := mongo.Database{conn, DbName, mongo.DefaultLastErrorCmd}
+	return &FollowersDatabase{
+		userFollowers:        db.C(USER_FOLLOWERS_COUNTERS_TABLE),
+		userFollowersCounter: db.C(USER_FOLLOWERS_COUNTERS_TABLE),
+		followPending:        db.C(FOLLOW_PENDING_TABLE),
+	}
 }
 
 // Insert updates two collections: the user followers table, and the user followers table counters. 
 // The first will be garbage collected later to remove older items. The counters table will be kept forever.
-func (c *FollowersDatabase) Insert(uf *userFollowers) (err os.Error) {
+func (c *FollowersDatabase) Insert(uf *userFollowers) (err error) {
 	if dryRunMode {
 		return
 	}
-	err = mongo.SafeInsert(c.mongoConn, USER_FOLLOWERS_TABLE, nil, uf)
+	err = c.userFollowers.Insert(uf)
 	if err != nil {
 		return err
 	}
@@ -64,29 +81,32 @@ func (c *FollowersDatabase) Insert(uf *userFollowers) (err os.Error) {
 		"date":           uf.Date,
 		"followerscount": len(uf.Followers),
 	}
-	return mongo.SafeInsert(c.mongoConn, USER_FOLLOWERS_COUNTERS_TABLE, nil, counter)
+	return c.userFollowersCounter.Insert(counter)
 }
 
-func (c *FollowersDatabase) MarkPendingFollow(uid int64) os.Error {
+func (c *FollowersDatabase) MarkPendingFollow(uid int64) error {
 	doc := map[string]interface{}{
 		"uid":  uid,
-		"date": time.UTC().Seconds(),
+		"date": time.Now().UTC().Unix(),
 	}
-	return mongo.SafeInsert(c.mongoConn, FOLLOW_PENDING_TABLE, nil, doc)
+	return c.followPending.Insert(doc)
 }
 
 func (c *FollowersDatabase) Reconnect() {
 	log.Printf("reconnecting, just in case")
 	conn, err := mongo.Dial("127.0.0.1:27017")
 	if err != nil {
-		log.Println("mongo Connect error:", err.String())
+		log.Println("mongo Connect error:", err.Error())
 		panic("mongo conn err")
 	}
-	c.mongoConn = conn
+	c.userFollowers.Conn = conn
+	c.userFollowersCounter.Conn = conn
+	c.followPending.Conn = conn
+	c.previousUnfollows.Conn = conn
 }
 
-func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, err os.Error) {
-	cursor, err := c.mongoConn.Find(FOLLOW_PENDING_TABLE, map[string]int64{"uid": uid}, nil)
+func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, err error) {
+	cursor, err := c.followPending.Find(map[string]int64{"uid": uid}).Cursor()
 	defer cursor.Close()
 	if cursor.HasNext() {
 		return true, nil
@@ -99,24 +119,23 @@ func (c *FollowersDatabase) GetWasUnfollowNotified(abandonedUser, unfollower int
 		"uid":        abandonedUser,
 		"unfollower": unfollower,
 	}
-	cursor, _ := c.mongoConn.Find(PREVIOUS_UNFOLLOWS_TABLE, query, nil)
+	cursor, _ := c.previousUnfollows.Find(query).Cursor()
 	defer cursor.Close()
 	return cursor.HasNext()
 }
 
-func (c *FollowersDatabase) MarkUnfollowNotified(abandonedUser, unfollower int64) os.Error {
+func (c *FollowersDatabase) MarkUnfollowNotified(abandonedUser, unfollower int64) error {
 	doc := map[string]int64{
 		"uid":        abandonedUser,
 		"unfollower": unfollower,
 	}
-	return mongo.SafeInsert(c.mongoConn, PREVIOUS_UNFOLLOWS_TABLE, nil, doc)
+	return c.previousUnfollows.Insert(doc)
 }
 
-func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf *userFollowers, err os.Error) {
-	collection := mongo.Collection{c.mongoConn, USER_FOLLOWERS_TABLE, mongo.DefaultLastErrorCmd}
-	cursor, err := collection.Find(&mongo.QuerySpec{
-		Query: mongo.Doc{{"uid", uid}},
-		Sort:  mongo.Doc{{"date", -1}},
+func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf *userFollowers, err error) {
+	cursor, err := c.userFollowers.Find(&mongo.QuerySpec{
+		Query: mongo.M{"uid": uid},
+		Sort:  mongo.D{{"date", -1}},
 	}).Cursor()
 	if err != nil {
 		return
@@ -134,25 +153,4 @@ func (c *FollowersDatabase) GetUserFollowers(uid int64) (uf *userFollowers, err 
 		log.Println("uf.Followers is nil. Incorrect database schema or bson decoding?")
 	}
 	return
-}
-
-// For testing.
-func SetupTestDb(testDb string) {
-	db = testDb
-	SetupDb()
-}
-
-func SetupDb() {
-	USER_FOLLOWERS_TABLE = db + ".user_followers"
-	USER_FOLLOWERS_COUNTERS_TABLE = db + ".user_followers_counters"
-	FOLLOW_PENDING_TABLE = db + ".follow_pending"
-	PREVIOUS_UNFOLLOWS_TABLE = db + ".previous_unfollows"
-
-}
-
-func init() {
-	flag.StringVar(&db, "database", "unfollow3",
-		"Name of mongo database.")
-	flag.BoolVar(&verboseMongo, "verboseMongo", false,
-		"Log all mongo queries.")
 }
