@@ -58,7 +58,7 @@ func NewFollowersDatabase() *FollowersDatabase {
 	}
 	db := mongo.Database{conn, DbName, mongo.DefaultLastErrorCmd}
 	return &FollowersDatabase{
-		userFollowers:        db.C(USER_FOLLOWERS_COUNTERS_TABLE),
+		userFollowers:        db.C(USER_FOLLOWERS_TABLE),
 		userFollowersCounter: db.C(USER_FOLLOWERS_COUNTERS_TABLE),
 		followPending:        db.C(FOLLOW_PENDING_TABLE),
 	}
