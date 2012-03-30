@@ -30,7 +30,7 @@ import (
 
 const (
 	TWITTER_API_BASE    = "http://api.twitter.com/1"
-	TWITTER_GET_TIMEOUT = 10 // seconds.
+	TWITTER_GET_TIMEOUT = 10 * time.Second
 )
 
 var oauthClient = oauth.Client{
@@ -58,7 +58,7 @@ func (tw *twitterClient) twitterGet(url string, param url.Values) (p []byte, err
 		done <- true
 	}()
 
-	timeout := time.After(TWITTER_GET_TIMEOUT * 1e9) //
+	timeout := time.After(TWITTER_GET_TIMEOUT) //
 	select {
 	case <-done:
 		break
@@ -81,7 +81,7 @@ func (tw *twitterClient) twitterPost(url string, param url.Values) (p []byte, er
 		done <- true
 	}()
 
-	timeout := time.After(TWITTER_GET_TIMEOUT * 1e9) // post in this case.
+	timeout := time.After(TWITTER_GET_TIMEOUT) // post in this case.
 	select {
 	case <-done:
 		break

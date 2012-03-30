@@ -15,7 +15,6 @@
 package main
 
 import (
-	_ "expvar"
 	"flag"
 	javaitarde "github.com/nictuku/javaitarde/crawl"
 	"log"
@@ -36,8 +35,8 @@ func init() {
 
 func main() {
 	flag.Parse()
-	crawler := javaitarde.NewFollowersCrawler()
 
+	crawler := javaitarde.NewFollowersCrawler()
 	for {
 		crawler.FindOurUsers(hubUserUid)
 		crawler.GetAllUsersFollowers()
@@ -45,6 +44,6 @@ func main() {
 			break
 		}
 		log.Println("sleeping.")
-		time.Sleep(30e9) // sleep for 30 seconds.
+		time.Sleep(30 * time.Second)
 	}
 }

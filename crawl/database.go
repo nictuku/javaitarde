@@ -107,11 +107,11 @@ func (c *FollowersDatabase) Reconnect() {
 
 func (c *FollowersDatabase) GetIsFollowingPending(uid int64) (isPending bool, err error) {
 	cursor, err := c.followPending.Find(map[string]int64{"uid": uid}).Cursor()
-	defer cursor.Close()
-	if cursor.HasNext() {
-		return true, nil
+	if err != nil {
+		return false, nil
 	}
-	return false, err
+	defer cursor.Close()
+	return cursor.HasNext(), nil
 }
 
 func (c *FollowersDatabase) GetWasUnfollowNotified(abandonedUser, unfollower int64) (wasNotified bool) {
@@ -119,7 +119,10 @@ func (c *FollowersDatabase) GetWasUnfollowNotified(abandonedUser, unfollower int
 		"uid":        abandonedUser,
 		"unfollower": unfollower,
 	}
-	cursor, _ := c.previousUnfollows.Find(query).Cursor()
+	cursor, err := c.previousUnfollows.Find(query).Cursor()
+	if err != nil {
+		return false
+	}
 	defer cursor.Close()
 	return cursor.HasNext()
 }

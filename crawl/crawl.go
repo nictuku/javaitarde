@@ -23,10 +23,23 @@ import (
 	"strings"
 )
 
-var dryRunMode bool
-var ignoredUsers string
-var maxUnfollows int
-var notifyUsers bool
+var (
+	dryRunMode   bool
+	ignoredUsers string
+	maxUnfollows int
+	notifyUsers  bool
+)
+
+func init() {
+	flag.BoolVar(&dryRunMode, "dryrun", true,
+		"Don't make changes to the database.")
+	flag.BoolVar(&notifyUsers, "notifyUsers", true,
+		"Notify unfollows to users.")
+	flag.IntVar(&maxUnfollows, "maxUnfollows", 50, "Panic if the number of unfollows for a user exceeds this.")
+	// TODO(nictuku): Make this a list.
+	flag.StringVar(&ignoredUsers, "ignoreUsers", "118058049",
+		"UserID to ignore (flaky twitter results)")
+}
 
 type FollowersCrawler struct {
 	ourUsers []int64
@@ -58,9 +71,11 @@ func (c *FollowersCrawler) FindOurUsers(uid int64) (err error) {
 }
 
 func (c *FollowersCrawler) GetAllUsersFollowers() (err error) {
+	var (
+		prevUf *userFollowers
+		newUf  *userFollowers
+	)
 	for _, u := range c.ourUsers {
-		var prevUf *userFollowers
-		var newUf *userFollowers
 		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
 			log.Printf("GetAllUserFollowers err=%s, userId=%d\n", err.Error(), u)
 			// Give up if we can't read from the database.
@@ -160,10 +175,6 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf *use
 				log.Println("(ignored)")
 				continue
 			}
-			if unfollower == 118058049 {
-				log.Println("ignored@@@@@@@@@@@@@@@")
-				continue
-			}
 			unfollowers = append(unfollowers, unfollower)
 		}
 	}
@@ -219,15 +230,4 @@ func (c *FollowersCrawler) FollowUser(uid int64) (err error) {
 		c.db.MarkPendingFollow(uid)
 	}
 	return
-}
-
-func init() {
-	flag.BoolVar(&dryRunMode, "dryrun", true,
-		"Don't make changes to the database.")
-	flag.BoolVar(&notifyUsers, "notifyUsers", true,
-		"Notify unfollows to users.")
-	flag.IntVar(&maxUnfollows, "maxUnfollows", 50, "Panic if the number of unfollows for a user exceeds this.")
-	// TODO(nictuku): Make this a list.
-	flag.StringVar(&ignoredUsers, "ignoreUsers", "118058049",
-		"UserID to ignore (flaky twitter results)")
 }
