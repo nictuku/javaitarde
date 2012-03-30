@@ -216,7 +216,7 @@ func readHttpResponse(resp *http.Response, httpErr error) (p []byte, err error) 
 	}
 	p, err = ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
-	rateLimitStats(resp)
+	rateLimit(resp)
 	if err != nil {
 		return nil, err
 	}
@@ -232,7 +232,7 @@ func readHttpResponse(resp *http.Response, httpErr error) (p []byte, err error) 
 
 }
 
-func rateLimitStats(resp *http.Response) {
+func rateLimit(resp *http.Response) {
 	if resp == nil {
 		return
 	}
@@ -245,6 +245,8 @@ func rateLimitStats(resp *http.Response) {
 		if sleep > 0 {
 			log.Printf("Twitter API limits exceeded. Sleeping for %v.\n", sleep)
 			time.Sleep(sleep)
+			return
 		}
+		log.Printf("Rate limited by twitter but X-RateLimit-Reset is in the past: block should have expired %v ago", time.Since(reset))
 	}
 }
