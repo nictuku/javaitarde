@@ -23,6 +23,8 @@ import (
 	"strings"
 )
 
+const maxErrors = 5
+
 var (
 	dryRunMode   bool
 	ignoredUsers string
@@ -72,10 +74,14 @@ func (c *FollowersCrawler) FindOurUsers(uid int64) (err error) {
 
 func (c *FollowersCrawler) GetAllUsersFollowers() (err error) {
 	var (
-		prevUf *userFollowers
-		newUf  *userFollowers
+		prevUf     *userFollowers
+		newUf      *userFollowers
+		errorCount = 0
 	)
 	for _, u := range c.ourUsers {
+		if errorCount >= maxErrors {
+			return errors.New(fmt.Sprintf("Too many errors (%d). Aborting GetAllUsersFollowers(). ", errorCount))
+		}
 		if prevUf, err = c.db.GetUserFollowers(u); err != nil {
 			log.Printf("GetAllUserFollowers err=%s, userId=%d\n", err.Error(), u)
 			// Give up if we can't read from the database.
@@ -89,25 +95,29 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err error) {
 				c.FollowUser(u)
 			} else {
 				log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.Error(), u)
+				errorCount += 1
 			}
 			continue
 		}
 		if newUf == nil {
 			log.Println("No followers found in twitter for user", u)
+			errorCount += 1
 			continue
 		}
 		for _, unfollower := range c.DiffFollowers(u, prevUf, newUf) {
 			if err := c.ProcessUnfollow(u, unfollower); err != nil {
 				log.Printf("ProcessUnfollow failure, userId=%d, unfollower=%v. Err: %v", u, unfollower, err)
+				errorCount += 1
 				continue
 			}
 		}
 		// Only save to DB if all went fine.
 		if err := c.saveUserFollowers(newUf); err != nil {
 			log.Printf("c.saveUserFollowers(), u=%d, err=%v", u, err)
+			errorCount += 1
 			continue
 		}
-
+		errorCount = 0
 	}
 	return
 }
