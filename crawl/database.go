@@ -61,6 +61,7 @@ func NewFollowersDatabase() *FollowersDatabase {
 		userFollowers:        db.C(USER_FOLLOWERS_TABLE),
 		userFollowersCounter: db.C(USER_FOLLOWERS_COUNTERS_TABLE),
 		followPending:        db.C(FOLLOW_PENDING_TABLE),
+		previousUnfollows:    db.C(PREVIOUS_UNFOLLOWS_TABLE),
 	}
 }
 
