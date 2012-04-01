@@ -232,14 +232,21 @@ func readHttpResponse(resp *http.Response, httpErr error) (p []byte, err error) 
 
 }
 
+// rateLimit blocks the execution if the request quota with twitter was
+// execeeded. It unblocks when the quota is reset.
 func rateLimit(resp *http.Response) {
 	if resp == nil {
 		return
 	}
 	curr := time.Now().UTC()
-	r, _ := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64)
+	hreset := resp.Header.Get("X-RateLimit-Reset")
+	hremaining := resp.Header.Get("X-RateLimit-Remaining")
+	if hreset == "" || hremaining == "" {
+		return
+	}
+	remaining, _ := strconv.ParseInt(hremaining, 10, 64)
+	r, _ := strconv.ParseInt(hreset, 10, 64)
 	reset := time.Unix(r, 0)
-	remaining, _ := strconv.ParseInt(resp.Header.Get("X-RateLimit-Remaining"), 10, 64)
 	if remaining < 1 && !reset.IsZero() {
 		sleep := reset.Sub(curr)
 		if sleep > 0 {
@@ -247,6 +254,6 @@ func rateLimit(resp *http.Response) {
 			time.Sleep(sleep)
 			return
 		}
-		log.Printf("Rate limited by twitter but X-RateLimit-Reset is in the past: block should have expired %v ago", time.Since(reset))
+		log.Printf("Rate limited by twitter but X-RateLimit-Reset is in the past: block should have expired %v ago (timestamp: %v)", time.Since(reset), hreset)
 	}
 }
