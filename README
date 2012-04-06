@@ -6,3 +6,6 @@ This is a twitter agent used by @JaVaiTarde. It's an "unfollows monitor".
 Users interested in this feature have to follow @JaVaiTarde. This robot will
 monitor their list of followers. If somebody stops following them, @JaVaiTarde
 sends them a direct message telling them so.
+
+It runs every 8 hours and respects Twitter's rate limiting, pausing the
+execution when the quota depletes, resuming only when the quota is reset.
