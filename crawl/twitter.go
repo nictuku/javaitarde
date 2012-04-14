@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/garyburd/go-oauth/oauth"
@@ -49,46 +50,48 @@ func newTwitterClient() *twitterClient {
 }
 
 func (tw *twitterClient) twitterGet(url string, param url.Values) (p []byte, err error) {
-	oauthClient.SignParam(tw.twitterToken, "GET", url, param)
-	url = url + "?" + param.Encode()
-	var resp *http.Response
-	done := make(chan bool, 1)
-	go func() {
-		resp, err = http.Get(url)
-		done <- true
-	}()
-
-	timeout := time.After(TWITTER_GET_TIMEOUT) //
-	select {
-	case <-done:
-		break
-	case <-timeout:
-		return nil, errors.New("http Get timed out - " + url)
-	}
-	return readHttpResponse(resp, err)
+	return tw.request("GET", url, param)
 }
 
 // twitterPost issues a POST query to twitter to the given url, using parameters from param. The params must be URL
 // escaped already.
 func (tw *twitterClient) twitterPost(url string, param url.Values) (p []byte, err error) {
-	oauthClient.SignParam(tw.twitterToken, "POST", url, param)
+	return tw.request("POST", url, param)
+}
 
-	// TODO: remove this dupe.
+func (tw *twitterClient) request(method string, url string, param url.Values) (p []byte, err error) {
+	// I can't use POST for all requests. Certain API methods require GET too.
+	oauthClient.SignParam(tw.twitterToken, method, url, param)
 	var resp *http.Response
 	done := make(chan bool, 1)
-	go func() {
-		resp, err = http.PostForm(url, param)
-		done <- true
-	}()
+	switch method {
+	case "POST":
+		go func() {
+			resp, err = http.PostForm(url, param)
+			done <- true
+		}()
+	case "GET":
+		url = url + "?" + param.Encode()
+		go func() {
+			resp, err = http.Get(url)
+			done <- true
+		}()
+	}
 
-	timeout := time.After(TWITTER_GET_TIMEOUT) // post in this case.
+	timeout := time.After(TWITTER_GET_TIMEOUT)
 	select {
 	case <-done:
 		break
 	case <-timeout:
-		return nil, errors.New("http POST timed out - " + url)
+		return nil, fmt.Errorf("http %v timed out - %v", method, url)
 	}
 	return readHttpResponse(resp, err)
+}
+
+func (tw *twitterClient) verifyCredentials() error {
+	u := TWITTER_API_BASE + "/account/verify_credentials.json"
+	_, err := tw.twitterGet(u, make(url.Values))
+	return err
 }
 
 func (tw *twitterClient) getUserName(uid int64) (screenName string, err error) {
@@ -119,6 +122,12 @@ type getFollowersResult struct {
 	NextCursor int64   `bson:"next_cursor"`
 }
 
+type NotAuthorizedError struct{}
+
+func (NotAuthorizedError) Error() string {
+	return "twitter: Not Authorized"
+}
+
 // getUserFollowers retrieves the followers of a user. If uid != 0, uses the uid for searching, otherwise searches by
 // screenName.
 func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *userFollowers, err error) {
@@ -128,33 +137,43 @@ func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *use
 	} else {
 		param.Set("screen_name", screenName)
 	}
-	cursor := int64(-1)
-	url := TWITTER_API_BASE + "/followers/ids.json"
-	var followers []int64
+
+	var (
+		followers []int64
+		resp      []byte
+		url       = TWITTER_API_BASE + "/followers/ids.json"
+		cursor    = int64(-1)
+		result    getFollowersResult
+	)
+
 	for {
 		param.Set("cursor", strconv.FormatInt(cursor, 10))
-		resp, err := tw.twitterGet(url, param)
+		resp, err = tw.twitterGet(url, param)
 		if err != nil {
-			return nil, err
+			if strings.Contains(err.Error(), " 401") {
+				err = NotAuthorizedError{}
+				return
+			}
 		}
-		var result getFollowersResult
 
 		if err = json.Unmarshal(resp, &result); err != nil {
 			log.Println("unmarshal error", err.Error())
 			log.Println("output was:", string(resp))
-			return nil, err
+			return
 		}
 		if len(result.Ids) == 0 {
-			return nil, errors.New("no followers.")
+			err = errors.New("no followers.")
+			return
 		}
 		followers = append(followers, result.Ids...)
 		if result.NextCursor == 0 {
+			// Done.
 			break
-			log.Println("done getting followers for", strconv.FormatInt(uid, 10))
 		}
 		cursor = result.NextCursor
 	}
-	return &userFollowers{uid, time.Now().UTC().Unix(), followers}, nil
+	uf = &userFollowers{uid, time.Now().UTC().Unix(), followers}
+	return
 }
 
 func (tw *twitterClient) NotifyUnfollower(abandonedName, unfollowerName string) (err error) {
@@ -180,12 +199,7 @@ func (tw *twitterClient) FollowUser(uid int64) (err error) {
 	param := make(url.Values)
 	param.Set("user_id", strconv.FormatInt(uid, 10))
 	param.Set("follow", "true")
-	log.Println("Trying to follow user", uid)
-	p, err := tw.twitterPost(url_, param)
-	if err != nil {
-		log.Println("follower user error:", err.Error())
-		fmt.Println("response", string(p))
-	}
+	_, err = tw.twitterPost(url_, param)
 	return
 }
 

@@ -18,7 +18,6 @@ import (
 	"flag"
 	javaitarde "github.com/nictuku/javaitarde/crawl"
 	"log"
-	"time"
 )
 
 var (
@@ -29,21 +28,16 @@ var (
 func init() {
 	flag.Int64Var(&hubUserUid, "hubuid", 217554981,
 		"Uid of our user, whose followers we want to track for unfollows.")
-	flag.BoolVar(&runContinuously, "runContinuously", false,
-		"Don't quit after the first run.")
 }
 
 func main() {
 	flag.Parse()
 
 	crawler := javaitarde.NewFollowersCrawler()
-	for {
-		crawler.FindOurUsers(hubUserUid)
-		crawler.GetAllUsersFollowers()
-		if !runContinuously {
-			break
-		}
-		log.Println("sleeping.")
-		time.Sleep(30 * time.Second)
+	if err := crawler.FindOurUsers(hubUserUid); err != nil {
+		log.Fatal("crawler.FindOurUsers:", err)
+	}
+	if err := crawler.GetAllUsersFollowers(); err != nil {
+		log.Fatal("crawler.GetAllUsersFollowers:", err)
 	}
 }

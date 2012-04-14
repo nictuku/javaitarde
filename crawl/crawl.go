@@ -61,6 +61,9 @@ func NewFollowersCrawler() *FollowersCrawler {
 
 // Find everyone who follows us, so we know who to crawl.
 func (c *FollowersCrawler) FindOurUsers(uid int64) (err error) {
+	if err := c.tw.verifyCredentials(); err != nil {
+		return err
+	}
 	uf, err := c.tw.getUserFollowers(uid, "")
 	if err != nil {
 		return err
@@ -92,7 +95,9 @@ func (c *FollowersCrawler) GetAllUsersFollowers() (err error) {
 		if newUf, err = c.tw.getUserFollowers(u, ""); err != nil {
 			if strings.Contains(err.Error(), " 401") {
 				// User's follower list is blocked. Need to request access.
-				c.FollowUser(u)
+				if err := c.FollowUser(u); err != nil {
+					log.Println("FollowUser:", err)
+				}
 			} else {
 				log.Printf("TwitterGetUserFollowers err=%s, userId=%d\n", err.Error(), u)
 				errorCount += 1
@@ -233,7 +238,7 @@ func (c *FollowersCrawler) FollowUser(uid int64) (err error) {
 		return
 	}
 	if isPending, _ := c.db.GetIsFollowingPending(uid); isPending {
-		log.Println("Already trying to follow user. Skipping follow request.")
+		// Already trying to follow user. Skipping follow request.
 		return
 	}
 	if err = c.tw.FollowUser(uid); err == nil {
