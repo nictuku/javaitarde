@@ -153,6 +153,10 @@ func (c *FollowersCrawler) saveUserFollowers(uf *userFollowers) (err error) {
 }
 
 func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf *userFollowers) (unfollowers []int64) {
+	if ignore, _ := strconv.ParseInt(ignoredUsers, 10, 64); ignore == abandonedUser {
+		log.Println("(ignored)")
+		return
+	}
 	unfollowers = make([]int64, 0)
 
 	if prevUf == nil || prevUf.Followers == nil {
@@ -168,7 +172,8 @@ func (c *FollowersCrawler) DiffFollowers(abandonedUser int64, prevUf, newUf *use
 
 	diff := len(fOld) - len(fNew)
 	if diff > maxUnfollows {
-		panic(fmt.Sprintf("too many unfollows %d > %d", diff, maxUnfollows))
+		log.Fatalf("too many unfollows for user %v: %d > %d",
+			abandonedUser, diff, maxUnfollows)
 	}
 
 	newMap := map[int64]bool{}
