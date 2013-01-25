@@ -35,7 +35,7 @@ const (
 )
 
 func init() {
-	flag.StringVar(&DbName, "database", "unfollow3",
+	flag.StringVar(&DbName, "database", "unfollow",
 		"Name of mongo database.")
 	flag.BoolVar(&verboseMongo, "verboseMongo", false,
 		"Log all mongo queries.")
