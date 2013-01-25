@@ -18,6 +18,7 @@ import (
 	"flag"
 	"github.com/garyburd/go-mongo/mongo"
 	"log"
+	"os"
 	"time"
 )
 
@@ -54,7 +55,7 @@ func NewFollowersDatabase() *FollowersDatabase {
 		panic("mongo conn err")
 	}
 	if verboseMongo {
-		conn = mongo.NewLoggingConn(conn)
+		conn = mongo.NewLoggingConn(conn, log.New(os.Stderr, "", 0), "")
 	}
 	db := mongo.Database{conn, DbName, mongo.DefaultLastErrorCmd}
 	return &FollowersDatabase{
