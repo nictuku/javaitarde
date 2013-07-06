@@ -30,15 +30,15 @@ import (
 )
 
 const (
-	TWITTER_API_BASE    = "http://api.twitter.com/1"
+	TWITTER_API_BASE    = "https://api.twitter.com/1.1"
 	TWITTER_GET_TIMEOUT = 10 * time.Second
 )
 
 var oauthClient = oauth.Client{
 	Credentials:                   oauth.Credentials{clientToken, clientSecret},
-	TemporaryCredentialRequestURI: "http://api.twitter.com/oauth/request_token",
-	ResourceOwnerAuthorizationURI: "http://api.twitter.com/oauth/authenticate",
-	TokenRequestURI:               "http://api.twitter.com/oauth/access_token",
+	TemporaryCredentialRequestURI: "https://api.twitter.com/oauth/request_token",
+	ResourceOwnerAuthorizationURI: "https://api.twitter.com/oauth/authenticate",
+	TokenRequestURI:               "https://api.twitter.com/oauth/access_token",
 }
 
 type twitterClient struct {
@@ -64,6 +64,7 @@ func (tw *twitterClient) request(method string, url string, param url.Values) (p
 	oauthClient.SignParam(tw.twitterToken, method, url, param)
 	var resp *http.Response
 	done := make(chan bool, 1)
+	// log.Printf("method %v, url %v, param %v", method, url, param)
 	switch method {
 	case "POST":
 		go func() {
@@ -90,8 +91,10 @@ func (tw *twitterClient) request(method string, url string, param url.Values) (p
 
 func (tw *twitterClient) verifyCredentials() error {
 	u := TWITTER_API_BASE + "/account/verify_credentials.json"
-	_, err := tw.twitterGet(u, make(url.Values))
-	return err
+	if _, err := tw.twitterGet(u, make(url.Values)); err != nil {
+		return fmt.Errorf("verifyCredentials twitterGet error: %v", err)
+	}
+	return nil
 }
 
 func (tw *twitterClient) getUserName(uid int64) (screenName string, err error) {
@@ -154,6 +157,7 @@ func (tw *twitterClient) getUserFollowers(uid int64, screenName string) (uf *use
 				err = NotAuthorizedError{}
 				return
 			}
+			return nil, fmt.Errorf("getUserFollowers twitterGet error: %v", err)
 		}
 
 		if err = json.Unmarshal(resp, &result); err != nil {
@@ -203,17 +207,27 @@ func (tw *twitterClient) FollowUser(uid int64) (err error) {
 	return
 }
 
+type twitterErrorMsg struct {
+	Message string
+}
+
+type twitterError struct {
+	Errors []twitterErrorMsg
+}
+
 func parseResponseError(p []byte) string {
-	var r map[string]string
+	// {"errors":[{"message":"Rate limit exceeded","code":88}]}
+	var r twitterError
 	if err := json.Unmarshal(p, &r); err != nil {
 		log.Printf("parseResponseError json.Unmarshal error: %v", err)
+		log.Printf("full response:\n======\n%v\n========", string(p))
 		return ""
 	}
-	e, ok := r["error"]
-	if !ok {
-		return ""
+	errorMsg := make([]string, 0, 1)
+	for _, msg := range r.Errors {
+		errorMsg = append(errorMsg, msg.Message)
 	}
-	return e
+	return fmt.Sprintf("%v", errorMsg)
 
 }
 
@@ -252,9 +266,14 @@ func rateLimit(resp *http.Response) {
 	if resp == nil {
 		return
 	}
+	// if resp.StatusCode == 429 { // Rate limit exceeded
+	//	log.Println("Got rate limited. Printing headers")
+	// 	log.Printf("%v", resp.Header)
+	// }
 	curr := time.Now().UTC()
-	hreset := resp.Header.Get("X-RateLimit-Reset")
-	hremaining := resp.Header.Get("X-RateLimit-Remaining")
+	// 1.0 was "RateLimit" instead of "Rate-Limit"
+	hreset := resp.Header.Get("X-Rate-Limit-Reset")
+	hremaining := resp.Header.Get("X-Rate-Limit-Remaining")
 	if hreset == "" || hremaining == "" {
 		return
 	}
